@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Torii</title>
+  <meta name="description" content="This server hosts a set of Torii apps. Pick one." />
+  <meta name="robots" content="noindex" />
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/assets/launcher.css" />
+</head>
+<body>
+  <main class="launcher" aria-live="polite">
+    <header class="launcher-head">
+      <a class="launcher-mark" href="/" aria-label="Torii home">
+        <!-- Minimal torii silhouette. Two lintels + two posts. currentColor for theme. -->
+        <svg width="36" height="28" viewBox="0 0 36 28" fill="none" aria-hidden="true">
+          <path d="M2 6 L34 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <path d="M5 10 L31 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M8 10 L8 26" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <path d="M28 10 L28 26" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+        <span>Torii</span>
+      </a>
+      <div class="launcher-eyebrow" id="eyebrow">Loading…</div>
+    </header>
+
+    <section class="launcher-lede">
+      <h1>This server runs a small set of Torii apps.</h1>
+      <p>Pick one to open. You can promote any app to the homepage.</p>
+    </section>
+
+    <section class="launcher-grid" id="grid" aria-label="Installed apps"></section>
+
+    <section class="launcher-empty" id="empty" hidden>
+      <h2>Nothing installed yet.</h2>
+      <p>Run an app installer (Continuum, Quest, or Plebeian) and it will appear here.</p>
+    </section>
+
+    <footer class="launcher-foot">
+      <span id="root-status">Homepage: <strong>launcher</strong></span>
+      <span class="dot" aria-hidden="true">·</span>
+      <a href="https://github.com/ChiefmonkeyArt" rel="noopener">ChiefmonkeyArt</a>
+    </footer>
+  </main>
+
+  <script type="module" src="/assets/launcher.js"></script>
+</body>
+</html>

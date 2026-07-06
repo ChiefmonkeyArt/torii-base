@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# torii — small CLI for the torii-base host layer.
+#
+# Usage:
+#   torii register <name> [--display "..."] [--desc "..."] [--version 0.2.6]
+#   torii unregister <name>
+#   torii set-root <name|none>
+#   torii reload                # validate + reload nginx
+#   torii status                # print registry.json and sidecar health
+#   torii doctor                # sanity-check the install
+#
+# Each command is a thin wrapper around the torii-base sidecar's HTTP API.
+# The CLI reads TORII_ADMIN_TOKEN from /opt/torii/env (root-only 0600 file)
+# so installers don't have to pass it on the command line.
+
+set -euo pipefail
+
+TORII_ROOT="${TORII_ROOT:-/opt/torii}"
+ENV_FILE="${TORII_ROOT}/env"
+SIDECAR_URL="${TORII_SIDECAR_URL:-http://127.0.0.1:8780}"
+
+die() { echo "torii: $*" >&2; exit 1; }
+
+require_root() {
+  if [[ $EUID -ne 0 ]] && ! [[ -r "$ENV_FILE" ]]; then
+    die "run as root or with read access to $ENV_FILE"
+  fi
+}
+
+load_env() {
+  if [[ -f "$ENV_FILE" ]]; then
+    # shellcheck disable=SC1090
+    set -a; source "$ENV_FILE"; set +a
+  fi
+  [[ -n "${TORII_ADMIN_TOKEN:-}" ]] || die "TORII_ADMIN_TOKEN not set (missing $ENV_FILE?)"
+}
+
+curl_auth() {
+  curl --silent --show-error --fail-with-body \
+    -H "Authorization: Bearer ${TORII_ADMIN_TOKEN}" \
+    -H "content-type: application/json" \
+    "$@"
+}
+
+cmd_register() {
+  local name="$1"; shift
+  local display="$name" desc="" version="unknown"
+  while (( $# > 0 )); do
+    case "$1" in
+      --display)  display="$2"; shift 2 ;;
+      --desc)     desc="$2"; shift 2 ;;
+      --version)  version="$2"; shift 2 ;;
+      *) die "unknown flag: $1" ;;
+    esac
+  done
+  require_root; load_env
+  local payload
+  payload=$(python3 -c 'import json,sys; print(json.dumps({"name":sys.argv[1],"display_name":sys.argv[2],"description":sys.argv[3],"version":sys.argv[4]}))' \
+    "$name" "$display" "$desc" "$version")
+  curl_auth -X POST "${SIDECAR_URL}/torii/apps" -d "$payload"
+  echo
+}
+
+cmd_unregister() {
+  local name="$1"
+  require_root; load_env
+  curl_auth -X DELETE "${SIDECAR_URL}/torii/apps/${name}"
+  echo
+}
+
+cmd_set_root() {
+  local target="$1"
+  require_root; load_env
+  local payload
+  if [[ "$target" == "none" ]] || [[ -z "$target" ]]; then
+    payload='{"root_app":null}'
+  else
+    payload=$(python3 -c 'import json,sys; print(json.dumps({"root_app":sys.argv[1]}))' "$target")
+  fi
+  curl_auth -X POST "${SIDECAR_URL}/torii/set-root" -d "$payload"
+  echo
+}
+
+cmd_reload() {
+  nginx -t
+  nginx -s reload
+  echo "nginx reloaded"
+}
+
+cmd_status() {
+  echo "== registry =="
+  cat "${TORII_ROOT}/registry.json" 2>/dev/null || echo "(no registry)"
+  echo
+  echo "== sidecar =="
+  curl --silent --fail-with-body "${SIDECAR_URL}/torii/healthz" || echo "(sidecar unreachable)"
+  echo
+}
+
+cmd_doctor() {
+  local ok=0 fail=0 warn=0
+  check() { if eval "$2" >/dev/null 2>&1; then echo "  ok    $1"; ok=$((ok+1)); else echo "  FAIL  $1"; fail=$((fail+1)); fi; }
+  check_warn() { if eval "$2" >/dev/null 2>&1; then echo "  ok    $1"; ok=$((ok+1)); else echo "  warn  $1"; warn=$((warn+1)); fi; }
+
+  echo "torii doctor"
+  echo
+  echo "[ host layer ]"
+  check "TORII_ROOT exists ($TORII_ROOT)"        "[[ -d '$TORII_ROOT' ]]"
+  check "env file present"                        "[[ -f '$ENV_FILE' ]]"
+  check "registry.json present"                   "[[ -f '${TORII_ROOT}/registry.json' ]]"
+  check "nginx-fragments dir present"             "[[ -d '${TORII_ROOT}/nginx-fragments' ]]"
+  check "launcher/index.html present"             "[[ -f '${TORII_ROOT}/launcher/index.html' ]]"
+  check "sidecar responding"                      "curl -sf ${SIDECAR_URL}/torii/healthz"
+  check "nginx config valid"                      "nginx -t"
+
+  # Discover registered apps + probe each one.
+  if [[ -f "${TORII_ROOT}/registry.json" ]] && command -v python3 >/dev/null 2>&1; then
+    local apps
+    apps=$(python3 -c "import json; d=json.load(open('${TORII_ROOT}/registry.json')); print(' '.join(d.get('apps', {}).keys()))" 2>/dev/null || true)
+    if [[ -n "$apps" ]]; then
+      echo
+      echo "[ registered apps ]"
+      for app in $apps; do
+        local mount
+        mount=$(python3 -c "import json; print(json.load(open('${TORII_ROOT}/registry.json'))['apps']['$app']['mount'])" 2>/dev/null || true)
+        check "$app mounted at $mount responds"    "curl -sfo /dev/null http://127.0.0.1$mount/ || curl -sfo /dev/null http://127.0.0.1$mount"
+      done
+    fi
+  fi
+
+  # Continuum agent — model providers + wallet.
+  # Loopback ports are the source of truth; the agent binds to 127.0.0.1.
+  local agent_url="http://127.0.0.1:8787"
+  if curl -sf "$agent_url/api/health" >/dev/null 2>&1; then
+    echo
+    echo "[ continuum agent (127.0.0.1:8787) ]"
+    check "agent /api/health"                     "curl -sf $agent_url/api/health"
+    # /api/health/models is admin-gated — skip in doctor. Probe providers directly.
+    check_warn "routstr endpoint reachable"       "curl -sf --max-time 5 https://api.routstr.com/"
+    check_warn "ollama daemon reachable (127.0.0.1:11434)" "curl -sf --max-time 3 http://127.0.0.1:11434/api/tags"
+    if curl -sf --max-time 3 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+      local model_count
+      model_count=$(curl -sf --max-time 3 http://127.0.0.1:11434/api/tags | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("models",[])))' 2>/dev/null || echo 0)
+      echo "        ollama has $model_count model(s) installed"
+    fi
+    # Cashu wallet path — config lives under the continuum user's home.
+    check_warn "cashu wallet dir present"         "[[ -d /home/continuum/app/agent/memory/wallet ]]"
+  else
+    echo
+    echo "[ continuum agent ] not running (or not installed) — skipping model + wallet checks"
+  fi
+
+  echo
+  echo "  $ok ok, $warn warn, $fail failed"
+  [[ $fail -eq 0 ]]
+}
+
+main() {
+  local cmd="${1:-}"; shift || true
+  case "$cmd" in
+    register)    cmd_register "$@" ;;
+    unregister)  cmd_unregister "$@" ;;
+    set-root)    cmd_set_root "$@" ;;
+    reload)      cmd_reload ;;
+    status)      cmd_status ;;
+    doctor)      cmd_doctor ;;
+    ""|-h|--help|help)
+      cat <<'USAGE'
+torii — host layer CLI
+
+Commands:
+  register <name> [--display "..."] [--desc "..."] [--version X]
+                         Register an installed app (fragment must already exist)
+  unregister <name>      Remove an app's registration
+  set-root <name|none>   Promote an app to owner of / (or reset to launcher)
+  reload                 Validate and reload nginx
+  status                 Show registry + sidecar health
+  doctor                 Sanity-check the installation
+
+Env:
+  TORII_ROOT             Default /opt/torii
+  TORII_SIDECAR_URL      Default http://127.0.0.1:8780
+  TORII_ADMIN_TOKEN      Loaded from $TORII_ROOT/env
+USAGE
+      ;;
+    *) die "unknown command: $cmd (try: torii help)" ;;
+  esac
+}
+
+main "$@"

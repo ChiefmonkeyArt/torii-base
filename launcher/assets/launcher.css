@@ -1,0 +1,193 @@
+/* Torii launcher — dark-first, no framework, ~2KB gzipped. */
+
+:root {
+  --bg: #0b0d10;
+  --bg-elev: #12161b;
+  --bg-hover: #1a1f26;
+  --fg: #e8ecef;
+  --fg-mute: #8b95a1;
+  --fg-dim: #5b6772;
+  --line: #232a33;
+  --accent: #d94f2c;      /* torii vermilion */
+  --accent-dim: #7a2c18;
+  --radius: 10px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="dark"] { /* explicit dark wins */ }
+  :root:not([data-theme="dark"]) {
+    --bg: #fafafa;
+    --bg-elev: #ffffff;
+    --bg-hover: #f0f1f3;
+    --fg: #17191c;
+    --fg-mute: #626b74;
+    --fg-dim: #9ba3ac;
+    --line: #e3e6ea;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+.launcher {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 48px 24px 64px;
+}
+
+.launcher-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 56px;
+}
+
+.launcher-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--fg);
+  text-decoration: none;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.launcher-mark svg { color: var(--accent); }
+
+.launcher-eyebrow {
+  font-size: 12px;
+  color: var(--fg-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+.launcher-lede h1 {
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin: 0 0 8px;
+  color: var(--fg);
+}
+
+.launcher-lede p {
+  color: var(--fg-mute);
+  margin: 0 0 40px;
+  max-width: 52ch;
+}
+
+.launcher-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+@media (min-width: 560px) {
+  .launcher-grid { grid-template-columns: 1fr 1fr; }
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: border-color 120ms, background 120ms;
+  min-height: 140px;
+}
+
+.tile:hover { border-color: var(--fg-dim); background: var(--bg-hover); }
+
+.tile-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.tile-name { font-size: 17px; font-weight: 500; margin: 0; color: var(--fg); }
+.tile-desc { color: var(--fg-mute); font-size: 13px; margin: 4px 0 0; line-height: 1.45; }
+.tile-version { font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+
+.tile-actions { display: flex; gap: 8px; align-items: center; }
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg);
+  padding: 8px 14px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color 120ms, background 120ms, color 120ms;
+}
+.btn:hover { border-color: var(--fg-mute); background: var(--bg-hover); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover { background: #c04525; border-color: #c04525; }
+
+.btn-ghost { color: var(--fg-mute); }
+
+.badge {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.launcher-empty {
+  text-align: center;
+  padding: 48px 0;
+  color: var(--fg-mute);
+}
+.launcher-empty h2 { font-weight: 500; color: var(--fg); margin: 0 0 8px; }
+
+.launcher-foot {
+  margin-top: 48px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+  color: var(--fg-dim);
+  font-size: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.launcher-foot a { color: var(--fg-mute); text-decoration: none; }
+.launcher-foot a:hover { color: var(--fg); }
+.launcher-foot .dot { color: var(--fg-dim); }
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  opacity: 0;
+  transition: opacity 200ms;
+  pointer-events: none;
+}
+.toast.show { opacity: 1; }
