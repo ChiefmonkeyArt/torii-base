@@ -13,16 +13,14 @@ ExecStart=/usr/bin/node /opt/torii/sidecar/index.mjs
 Restart=on-failure
 RestartSec=5
 
-# nginx -s reload needs to run as root; we grant just that via sudoers.
-# See docs/sudoers-torii-nginx.
-# The sidecar itself does `execFile('nginx', ...)`; we rely on nginx's suid
-# behavior being off, so the sidecar's nginx reloads run through sudo -n.
-# For simplicity in v0.1 we let the sidecar shell out directly; on a
-# hardened box, wire a sudoers snippet and prefix nginx calls with sudo.
+# The sidecar shells out to `sudo -n nginx -t` and `sudo -n nginx -s reload`
+# to reload nginx after registering an app. bootstrap.sh installs a sudoers
+# snippet at /etc/sudoers.d/torii-nginx that scopes this privilege to those
+# two commands only. NoNewPrivileges must stay off (v0.1.1) because sudo
+# requires setuid, which NoNewPrivileges forbids.
 Environment=NODE_ENV=production
 
-# Hardening
-NoNewPrivileges=true
+# Hardening (NoNewPrivileges intentionally omitted; see comment above)
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true

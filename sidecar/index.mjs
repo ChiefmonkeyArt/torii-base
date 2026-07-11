@@ -31,7 +31,7 @@ const ROOT_APP_CONF = join(TORII_ROOT, 'root_app.conf');
 const PORT = Number(process.env.TORII_SIDECAR_PORT || 8780);
 const HOST = process.env.TORII_SIDECAR_HOST || '127.0.0.1';
 const ADMIN_TOKEN = process.env.TORII_ADMIN_TOKEN || '';
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 
 const APP_NAME_RE = /^[a-z][a-z0-9-]{1,31}$/;
 
@@ -70,9 +70,15 @@ async function writeRootAppConf(appName) {
 }
 
 async function nginxReload() {
+  // Sidecar runs as the `torii` system user, which cannot reload nginx
+  // directly (SIGHUP to the root-owned master requires CAP_KILL or root).
+  // bootstrap.sh drops a sudoers snippet at /etc/sudoers.d/torii-nginx
+  // that grants passwordless access to exactly `nginx -t` and
+  // `nginx -s reload`; we call both through `sudo -n` so any failure to
+  // acquire privilege surfaces as an error instead of hanging on a prompt.
   // Validate first; only reload if config is valid.
-  await execFileAsync('nginx', ['-t']);
-  await execFileAsync('nginx', ['-s', 'reload']);
+  await execFileAsync('sudo', ['-n', 'nginx', '-t']);
+  await execFileAsync('sudo', ['-n', 'nginx', '-s', 'reload']);
 }
 
 function requireAdmin(req, reply) {
