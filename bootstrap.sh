@@ -97,6 +97,28 @@ EOF
 log "Installing sidecar deps"
 (cd "$TORII_ROOT/sidecar" && sudo -u "$TORII_USER" npm ci --omit=dev --silent 2>/dev/null || sudo -u "$TORII_USER" npm install --omit=dev --silent)
 
+log "Installing sudoers snippet for $TORII_USER -> nginx"
+# The sidecar runs as the unprivileged 'torii' user but has to reload nginx
+# after registering an app. Grant passwordless sudo for exactly two nginx
+# invocations, nothing else. visudo -cf catches syntax errors before we
+# clobber /etc/sudoers.d/.
+NGINX_BIN="$(command -v nginx || echo /usr/sbin/nginx)"
+SUDOERS_TMP="$(mktemp)"
+cat > "$SUDOERS_TMP" <<EOF
+# Written by torii-base bootstrap.sh. Do not edit by hand.
+# Allows the '$TORII_USER' system user to test + reload nginx (and only that).
+$TORII_USER ALL=(root) NOPASSWD: $NGINX_BIN -t, $NGINX_BIN -s reload
+EOF
+chmod 0440 "$SUDOERS_TMP"
+if visudo -cf "$SUDOERS_TMP" >/dev/null; then
+  install -m 0440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/torii-nginx
+  rm -f "$SUDOERS_TMP"
+else
+  rm -f "$SUDOERS_TMP"
+  echo "ERROR: generated sudoers snippet failed visudo validation" >&2
+  exit 1
+fi
+
 log "Installing systemd unit"
 install -m 0644 "$SCRIPT_DIR/systemd/torii-base-sidecar.service" /etc/systemd/system/torii-base-sidecar.service
 systemctl daemon-reload
