@@ -143,6 +143,27 @@ html, body {
 
 .btn-ghost { color: var(--fg-mute); }
 
+/* Homepage promotion intentionally unavailable (e.g. Continuum). Keep the
+   button's shape so the row reads the same, just visibly inert. */
+.btn-disabled,
+.btn:disabled {
+  color: var(--fg-dim);
+  border-color: var(--line);
+  background: transparent;
+  cursor: not-allowed;
+}
+.btn-disabled:hover,
+.btn:disabled:hover {
+  border-color: var(--line);
+  background: transparent;
+}
+
+.tile-note {
+  font-size: 11px;
+  color: var(--fg-dim);
+  align-self: center;
+}
+
 .badge {
   font-size: 10px;
   letter-spacing: 0.08em;

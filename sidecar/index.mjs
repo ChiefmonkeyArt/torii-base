@@ -22,6 +22,7 @@ import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join, dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const execFileAsync = promisify(execFile);
 
@@ -31,9 +32,18 @@ const ROOT_APP_CONF = join(TORII_ROOT, 'root_app.conf');
 const PORT = Number(process.env.TORII_SIDECAR_PORT || 8780);
 const HOST = process.env.TORII_SIDECAR_HOST || '127.0.0.1';
 const ADMIN_TOKEN = process.env.TORII_ADMIN_TOKEN || '';
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 
 const APP_NAME_RE = /^[a-z][a-z0-9-]{1,31}$/;
+
+// Apps that must never own `/`. Continuum is an authenticated app builder +
+// agent surface; promoting it to the public homepage is unsafe, so the
+// launcher greys out its "Set as homepage" control and set-root rejects it
+// here as defense-in-depth. This only blocks the root promotion — Continuum
+// stays fully reachable at its own mount (/continuum/).
+const ROOT_BLOCKLIST = new Set(['continuum']);
+
+export const isRootAllowed = (name) => !ROOT_BLOCKLIST.has(name);
 
 const app = Fastify({
   logger: { level: process.env.LOG_LEVEL || 'info' },
@@ -70,6 +80,8 @@ async function writeRootAppConf(appName) {
 }
 
 async function nginxReload() {
+  // Escape hatch for tests / dry-run environments without a real nginx.
+  if (process.env.TORII_SKIP_NGINX_RELOAD === '1') return;
   // Sidecar runs as the `torii` system user, which cannot reload nginx
   // directly (SIGHUP to the root-owned master requires CAP_KILL or root).
   // bootstrap.sh drops a sudoers snippet at /etc/sudoers.d/torii-nginx
@@ -115,6 +127,9 @@ app.post('/torii/set-root', async (req, reply) => {
   const target = req.body?.root_app;
   if (target !== null && (typeof target !== 'string' || !APP_NAME_RE.test(target))) {
     return reply.code(400).send({ error: 'invalid_root_app' });
+  }
+  if (target !== null && !isRootAllowed(target)) {
+    return reply.code(403).send({ error: 'root_not_allowed', name: target });
   }
   const reg = await readRegistry();
   if (target !== null && !reg.apps.some((a) => a.name === target)) {
@@ -204,7 +219,13 @@ const start = async () => {
   app.log.info({ version: VERSION, port: PORT, root: TORII_ROOT }, 'torii-base sidecar up');
 };
 
-start().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only bind a port when run directly; tests import `app` and use inject().
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  start().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+export { app };
