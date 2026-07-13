@@ -1,17 +1,21 @@
 {
   "name": "torii-base-sidecar",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Tiny fastify sidecar for torii-base: registry API + set-root endpoint.",
   "type": "module",
   "main": "index.mjs",
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "node index.mjs",
-    "check": "node --check index.mjs"
+    "check": "node --check index.mjs",
+    "test": "node --test"
   },
   "dependencies": {
     "fastify": "^5.0.0",
     "@fastify/cookie": "^11.0.0"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1"
   },
   "license": "MIT"
 }

@@ -9,10 +9,13 @@
 const APPS_URL = '/torii/apps.json';
 const SET_ROOT_URL = '/torii/set-root';
 
-const grid = document.getElementById('grid');
-const empty = document.getElementById('empty');
-const eyebrow = document.getElementById('eyebrow');
-const rootStatus = document.getElementById('root-status');
+// Apps that must not be promoted to the homepage. Mirrors the sidecar's
+// ROOT_BLOCKLIST — the control is greyed out here and set-root rejects it
+// server-side too. Launching the app (the "Open" link) stays available.
+const ROOT_BLOCKLIST = new Set(['continuum']);
+const NO_HOMEPAGE_COPY = 'Not recommended as homepage';
+
+const isRootAllowed = (name) => !ROOT_BLOCKLIST.has(name);
 
 const toast = (msg) => {
   let t = document.querySelector('.toast');
@@ -35,6 +38,18 @@ const renderTile = (app, isRoot) => {
   const li = document.createElement('article');
   li.className = 'tile';
   li.setAttribute('data-app', app.name);
+  const rootAllowed = isRootAllowed(app.name);
+  let homepageControl;
+  if (isRoot) {
+    homepageControl = `<button class="btn btn-ghost" data-action="unset">Unset homepage</button>`;
+  } else if (!rootAllowed) {
+    homepageControl =
+      `<button class="btn btn-disabled" data-action="set" disabled aria-disabled="true"` +
+      ` title="${escapeHtml(NO_HOMEPAGE_COPY)}" aria-label="Set as homepage — ${escapeHtml(NO_HOMEPAGE_COPY)}">Set as homepage</button>` +
+      `<span class="tile-note" aria-hidden="true">${escapeHtml(NO_HOMEPAGE_COPY)}</span>`;
+  } else {
+    homepageControl = `<button class="btn" data-action="set">Set as homepage</button>`;
+  }
   li.innerHTML = `
     <div class="tile-top">
       <div>
@@ -45,11 +60,7 @@ const renderTile = (app, isRoot) => {
     </div>
     <div class="tile-actions">
       <a class="btn btn-primary" href="/${encodeURIComponent(app.name)}/">Open</a>
-      ${
-        isRoot
-          ? `<button class="btn btn-ghost" data-action="unset">Unset homepage</button>`
-          : `<button class="btn" data-action="set">Set as homepage</button>`
-      }
+      ${homepageControl}
     </div>
   `;
   li.addEventListener('click', async (ev) => {
@@ -57,6 +68,9 @@ const renderTile = (app, isRoot) => {
     if (!btn) return;
     ev.preventDefault();
     const action = btn.getAttribute('data-action');
+    // Guard: never fire set-root for a blocklisted app, even if the disabled
+    // attribute is bypassed. Mirrors the server-side rejection.
+    if (action === 'set' && !isRootAllowed(app.name)) return;
     btn.disabled = true;
     try {
       const target = action === 'set' ? app.name : null;
@@ -84,6 +98,10 @@ const renderTile = (app, isRoot) => {
 };
 
 async function load() {
+  const grid = document.getElementById('grid');
+  const empty = document.getElementById('empty');
+  const eyebrow = document.getElementById('eyebrow');
+  const rootStatus = document.getElementById('root-status');
   grid.innerHTML = '';
   try {
     const res = await fetch(APPS_URL, { credentials: 'same-origin' });
@@ -112,4 +130,10 @@ async function load() {
   }
 }
 
-load();
+// Auto-run only in the browser, where the launcher DOM is present. Under a
+// test harness the module is imported without #grid, so this stays inert.
+if (typeof document !== 'undefined' && document.getElementById('grid')) {
+  load();
+}
+
+export { renderTile, isRootAllowed, ROOT_BLOCKLIST, NO_HOMEPAGE_COPY };
