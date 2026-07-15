@@ -60,6 +60,9 @@ install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT"
 install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT/launcher" "$TORII_ROOT/launcher/assets"
 install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT/nginx-fragments"
 install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT/sidecar"
+# Personal homepage: the sidecar renders index.html here; nginx serves it at /
+# when the homepage is activated as root_app.
+install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT/homepage"
 install -d -m 0755 -o "root"        -g "root"        "$TORII_ROOT/bin"
 
 cp -a "$SCRIPT_DIR/launcher/index.html"        "$TORII_ROOT/launcher/index.html"
@@ -68,7 +71,7 @@ cp -a "$SCRIPT_DIR/sidecar/."                  "$TORII_ROOT/sidecar/"
 cp -a "$SCRIPT_DIR/bin/torii"                  "/usr/local/bin/torii"
 chmod 0755 /usr/local/bin/torii
 
-chown -R "$TORII_USER:$TORII_USER" "$TORII_ROOT/launcher" "$TORII_ROOT/sidecar" "$TORII_ROOT/nginx-fragments"
+chown -R "$TORII_USER:$TORII_USER" "$TORII_ROOT/launcher" "$TORII_ROOT/sidecar" "$TORII_ROOT/nginx-fragments" "$TORII_ROOT/homepage"
 
 log "Generating admin token (if missing)"
 if [[ ! -f "$TORII_ROOT/env" ]]; then
@@ -88,8 +91,15 @@ if [[ ! -f "$TORII_ROOT/registry.json" ]]; then
   chown "$TORII_USER:$TORII_USER" "$TORII_ROOT/registry.json"
 fi
 [[ -f "$TORII_ROOT/root_app.conf" ]] || {
-  cat > "$TORII_ROOT/root_app.conf" <<'EOF'
-# root_app is unset; launcher owns /.
+  # This include is the single owner of `location = /` (torii.conf has no
+  # fallback). Default state serves the launcher; the sidecar rewrites it on
+  # set-root / homepage activation and also reconciles it on boot.
+  cat > "$TORII_ROOT/root_app.conf" <<EOF
+# Written by torii-base bootstrap. root_app is unset; the launcher owns /.
+location = / {
+    root $TORII_ROOT/launcher;
+    try_files /index.html =404;
+}
 EOF
   chown "$TORII_USER:$TORII_USER" "$TORII_ROOT/root_app.conf"
 }

@@ -50,6 +50,7 @@ need day-to-day is wrapped by the `torii` CLI on the host.
 ```bash
 sudo torii register continuum "Continuum" /continuum "App builder + agent"
 sudo torii set-root continuum          # make /continuum the site homepage
+sudo torii set-root homepage           # activate the personal homepage at /
 sudo torii set-root launcher           # go back to the launcher at /
 sudo torii unregister quest
 sudo torii status
@@ -79,13 +80,47 @@ dependencies — vanilla HTML/CSS/JS.
 
 ---
 
+## Personal homepage
+
+The launcher has a **Create a homepage** action (`/assets/create.html`) that
+builds a small, funky front door for the domain. It's deliberately basic:
+
+- **Fields:** title, optional tagline, one of a few curated self-hosted
+  themes, and up to 8 links. Installed integrations (Torii Quest, Plebeian
+  Market) are offered as one-click link suggestions when registered; absent
+  apps are simply not suggested — nothing hard-fails.
+- **Live preview:** the editor renders the exact output in a sandboxed
+  iframe using the same `homepage-render.mjs` module the sidecar uses, so the
+  preview is byte-for-byte what gets served.
+- **Save / activate:** saving writes `homepage.json` and renders a static
+  `homepage/index.html` (both atomic). *Save & activate* also promotes the
+  homepage to `/`; nginx then serves the static file directly. A **Reset to
+  launcher** button reverts `/`.
+- **Route back:** the rendered page carries a "Made with Torii" link back to
+  the editor, and the editor links back to the launcher.
+
+Security: the homepage never accepts or renders arbitrary HTML/JS. All
+content is escaped, lengths are capped, and link URLs must be a site-relative
+`/path` or an `http(s)` URL. The rendered document contains **no scripts** and
+ships a strict CSP (`script-src 'none'`). No third-party CDNs, fonts, or
+telemetry. Admin auth (Bearer token) is required to save, activate, or reset,
+same as `set-root`.
+
+Recovery: if `root_app` is `homepage` but the rendered file is missing, the
+sidecar resets `/` to the launcher on boot so a broken homepage can never
+strand the domain.
+
+---
+
 ## Layout
 
 ```
 /opt/torii/
   env                            # TORII_ADMIN_TOKEN, TORII_DOMAIN, etc.
   registry.json                  # apps registered on this host
-  root_app.conf                  # nginx include for `/` (launcher or redirect)
+  root_app.conf                  # nginx include for `/` (launcher/redirect/homepage)
+  homepage.json                  # saved personal-homepage config
+  homepage/index.html            # rendered personal homepage (served at / when active)
   launcher/                      # static assets served at /
   nginx-fragments/               # each app drops its own <name>.conf here
 

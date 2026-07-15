@@ -111,9 +111,14 @@ async function load() {
     const rootApp = typeof data.root_app === 'string' ? data.root_app : null;
 
     eyebrow.textContent = `Torii base · ${escapeHtml(data.version || '0.1.0')}`;
-    rootStatus.innerHTML = rootApp
-      ? `Homepage: <strong>${escapeHtml(rootApp)}</strong>`
+    const rootLabel = rootApp === 'homepage' ? 'personal homepage' : rootApp;
+    rootStatus.innerHTML = rootLabel
+      ? `Homepage: <strong>${escapeHtml(rootLabel)}</strong>`
       : `Homepage: <strong>launcher</strong>`;
+
+    // Reflect an existing personal homepage in the create/edit CTA.
+    const createLink = document.getElementById('create-homepage');
+    if (createLink && rootApp === 'homepage') createLink.textContent = 'Edit your homepage';
 
     if (apps.length === 0) {
       empty.hidden = false;
