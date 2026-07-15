@@ -17,24 +17,35 @@
 
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { randomBytes } from 'node:crypto';
+import { validateHomepage, renderHomepage } from '../launcher/assets/homepage-render.mjs';
 
 const execFileAsync = promisify(execFile);
 
 const TORII_ROOT = process.env.TORII_ROOT || '/opt/torii';
 const REGISTRY_PATH = join(TORII_ROOT, 'registry.json');
 const ROOT_APP_CONF = join(TORII_ROOT, 'root_app.conf');
+const HOMEPAGE_JSON = join(TORII_ROOT, 'homepage.json');
+const HOMEPAGE_DIR = join(TORII_ROOT, 'homepage');
+const HOMEPAGE_HTML = join(HOMEPAGE_DIR, 'index.html');
 const PORT = Number(process.env.TORII_SIDECAR_PORT || 8780);
 const HOST = process.env.TORII_SIDECAR_HOST || '127.0.0.1';
 const ADMIN_TOKEN = process.env.TORII_ADMIN_TOKEN || '';
-const VERSION = '0.1.2';
+const VERSION = '0.1.3';
 
 const APP_NAME_RE = /^[a-z][a-z0-9-]{1,31}$/;
+
+// Reserved root target for the user-built personal homepage. It is not a
+// registered app: `/` serves a static, sidecar-rendered HTML file instead of
+// redirecting to a mount. set-root accepts it only when a homepage has been
+// saved and rendered (see the homepage guard in the set-root handler).
+const HOMEPAGE_ROOT = 'homepage';
 
 // Apps that must never own `/`. Continuum is an authenticated app builder +
 // agent surface; promoting it to the public homepage is unsafe, so the
@@ -66,17 +77,49 @@ async function readRegistry() {
   }
 }
 
-async function writeRegistry(reg) {
-  await mkdir(dirname(REGISTRY_PATH), { recursive: true });
-  await writeFile(REGISTRY_PATH, JSON.stringify(reg, null, 2) + '\n', 'utf8');
+// Write-to-temp-then-rename so readers (nginx, the launcher) never observe a
+// half-written file, and a crash mid-write leaves the previous version intact.
+async function atomicWrite(path, data) {
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp-${randomBytes(6).toString('hex')}`;
+  await writeFile(tmp, data, 'utf8');
+  await rename(tmp, path);
 }
 
+async function writeRegistry(reg) {
+  await atomicWrite(REGISTRY_PATH, JSON.stringify(reg, null, 2) + '\n');
+}
+
+const LAUNCHER_ROOT_BLOCK =
+  `# Written by torii-base sidecar. Do not edit by hand.\n# root_app is unset; the launcher owns /.\nlocation = / {\n    root ${join(TORII_ROOT, 'launcher')};\n    try_files /index.html =404;\n}\n`;
+
 async function writeRootAppConf(appName) {
-  // Empty file when unset — nginx include is a no-op.
-  const body = appName
-    ? `# Written by torii-base sidecar. Do not edit by hand.\nlocation = / {\n    return 302 /${appName}/;\n}\n`
-    : `# Written by torii-base sidecar. root_app is unset; launcher owns /.\n`;
-  await writeFile(ROOT_APP_CONF, body, 'utf8');
+  // This include is the *single* owner of `location = /` — torii.conf no
+  // longer declares a fallback, because two `location = /` blocks in one
+  // server is a fatal nginx error. So every state (unset, redirect, homepage)
+  // must emit exactly one such block here.
+  let body;
+  if (appName === HOMEPAGE_ROOT) {
+    // Serve the rendered personal homepage statically at /. try_files falls
+    // back to 404 if the file is missing; boot reconciliation resets root to
+    // the launcher in that case so a broken homepage can't strand the site.
+    body = `# Written by torii-base sidecar. Do not edit by hand.\nlocation = / {\n    root ${HOMEPAGE_DIR};\n    try_files /index.html =404;\n}\n`;
+  } else if (appName) {
+    body = `# Written by torii-base sidecar. Do not edit by hand.\nlocation = / {\n    return 302 /${appName}/;\n}\n`;
+  } else {
+    body = LAUNCHER_ROOT_BLOCK;
+  }
+  await atomicWrite(ROOT_APP_CONF, body);
+}
+
+async function readHomepage() {
+  try {
+    const parsed = JSON.parse(await readFile(HOMEPAGE_JSON, 'utf8'));
+    return validateHomepage(parsed).value;
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
 }
 
 async function nginxReload() {
@@ -122,6 +165,25 @@ app.get('/torii/apps.json', async () => {
 // Admin endpoints
 // ─────────────────────────────────────────────────────────────
 
+// Commit a new root_app: persist registry + conf, reload nginx, and roll
+// everything back to the prior state if the reload fails. Returns true on
+// success. `prev` is the root_app value to restore on failure.
+async function applyRoot(reg, target, prev, log) {
+  reg.root_app = target;
+  await writeRegistry(reg);
+  await writeRootAppConf(target);
+  try {
+    await nginxReload();
+    return true;
+  } catch (err) {
+    reg.root_app = prev;
+    await writeRegistry(reg);
+    await writeRootAppConf(prev);
+    log.error({ err }, 'nginx reload failed, rolled back root_app');
+    return false;
+  }
+}
+
 app.post('/torii/set-root', async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
   const target = req.body?.root_app;
@@ -132,23 +194,54 @@ app.post('/torii/set-root', async (req, reply) => {
     return reply.code(403).send({ error: 'root_not_allowed', name: target });
   }
   const reg = await readRegistry();
-  if (target !== null && !reg.apps.some((a) => a.name === target)) {
+  if (target === HOMEPAGE_ROOT) {
+    // The personal homepage is not a registered app; it just needs to have
+    // been saved + rendered before it can own /.
+    if (!existsSync(HOMEPAGE_HTML)) {
+      return reply.code(409).send({ error: 'homepage_not_configured' });
+    }
+  } else if (target !== null && !reg.apps.some((a) => a.name === target)) {
     return reply.code(404).send({ error: 'app_not_installed', name: target });
   }
-  reg.root_app = target;
-  await writeRegistry(reg);
-  await writeRootAppConf(target);
-  try {
-    await nginxReload();
-  } catch (err) {
-    // Roll back the conf change if nginx refused it.
-    reg.root_app = null;
-    await writeRegistry(reg);
-    await writeRootAppConf(null);
-    req.log.error({ err }, 'nginx reload failed, rolled back');
+  const prev = reg.root_app;
+  if (!(await applyRoot(reg, target, prev, req.log))) {
     return reply.code(500).send({ error: 'nginx_reload_failed' });
   }
   return { ok: true, root_app: target };
+});
+
+// GET /torii/homepage.json — current saved homepage config (public; the page
+// it renders is public once activated anyway). Returns configured:false when
+// nothing has been saved yet.
+app.get('/torii/homepage.json', async () => {
+  const value = await readHomepage();
+  return value ? { configured: true, ...value } : { configured: false };
+});
+
+// POST /torii/homepage — save (and optionally activate) the personal homepage.
+// Validates strictly, persists the clean config atomically, then renders a
+// self-contained static HTML file. With { activate: true } it also promotes
+// the homepage to owner of / (with the same rollback as set-root).
+app.post('/torii/homepage', async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
+  const result = validateHomepage(req.body || {});
+  if (!result.ok) {
+    return reply.code(400).send({ error: 'invalid_homepage', errors: result.errors });
+  }
+  const value = { ...result.value, updated_at: new Date().toISOString() };
+  await atomicWrite(HOMEPAGE_JSON, JSON.stringify(value, null, 2) + '\n');
+  await atomicWrite(HOMEPAGE_HTML, renderHomepage(value));
+
+  let activated = false;
+  if (req.body?.activate === true) {
+    const reg = await readRegistry();
+    const prev = reg.root_app;
+    if (!(await applyRoot(reg, HOMEPAGE_ROOT, prev, req.log))) {
+      return reply.code(500).send({ error: 'nginx_reload_failed', saved: true });
+    }
+    activated = true;
+  }
+  return { ok: true, activated, value: result.value };
 });
 
 // POST /torii/apps — registrar for install scripts. Idempotent upsert by name.
@@ -209,12 +302,33 @@ app.delete('/torii/apps/:name', async (req, reply) => {
 // Boot
 // ─────────────────────────────────────────────────────────────
 
+// Boot reconciliation. Two jobs:
+//   1. Recovery — if the registry says the homepage owns / but its rendered
+//      file is gone (deleted, half-migrated, disk wiped), the site would 404
+//      at root. Reset to the launcher.
+//   2. Rewrite the `location = /` include to match root_app. Because
+//      torii.conf no longer hardcodes a launcher fallback, this also upgrades
+//      pre-0.1.3 installs whose root_app.conf was a comment-only stub (which
+//      would otherwise leave / with no location block after upgrade).
+async function reconcileRoot() {
+  const reg = await readRegistry();
+  let target = reg.root_app;
+  if (target === HOMEPAGE_ROOT && !existsSync(HOMEPAGE_HTML)) {
+    app.log.warn('root_app=homepage but no rendered homepage found; resetting root to launcher');
+    target = null;
+    reg.root_app = null;
+    await writeRegistry(reg);
+  }
+  await writeRootAppConf(target);
+}
+
 const start = async () => {
   if (!existsSync(REGISTRY_PATH)) {
     await mkdir(TORII_ROOT, { recursive: true }).catch(() => {});
     await writeRegistry({ apps: [], root_app: null }).catch(() => {});
   }
   if (!existsSync(ROOT_APP_CONF)) await writeRootAppConf(null).catch(() => {});
+  await reconcileRoot().catch((err) => app.log.error({ err }, 'homepage reconcile failed'));
   await app.listen({ port: PORT, host: HOST });
   app.log.info({ version: VERSION, port: PORT, root: TORII_ROOT }, 'torii-base sidecar up');
 };
@@ -228,4 +342,4 @@ if (isMain) {
   });
 }
 
-export { app };
+export { app, reconcileRoot };

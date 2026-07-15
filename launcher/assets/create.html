@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Create a homepage · Torii</title>
+  <meta name="description" content="Build a simple personal homepage for this Torii server." />
+  <meta name="robots" content="noindex" />
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/assets/launcher.css" />
+  <link rel="stylesheet" href="/assets/create.css" />
+</head>
+<body>
+  <main class="editor">
+    <header class="launcher-head">
+      <a class="launcher-mark" href="/assets/create.html" aria-label="Homepage creator">
+        <svg width="36" height="28" viewBox="0 0 36 28" fill="none" aria-hidden="true">
+          <path d="M2 6 L34 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <path d="M5 10 L31 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M8 10 L8 26" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <path d="M28 10 L28 26" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+        <span>Homepage creator</span>
+      </a>
+      <a class="btn btn-ghost" href="/">Back to launcher</a>
+    </header>
+
+    <section class="launcher-lede">
+      <h1>Make a funky homepage.</h1>
+      <p>Give this server a friendly front door. Preview it live, then save and
+         activate when you're happy. You can always reset to the launcher.</p>
+    </section>
+
+    <div class="editor-cols">
+      <form id="form" class="editor-form" novalidate>
+        <label class="field">
+          <span>Title</span>
+          <input id="title" name="title" type="text" maxlength="60" required
+                 autocomplete="off" placeholder="My Torii" />
+          <small class="field-err" data-err="title"></small>
+        </label>
+
+        <label class="field">
+          <span>Tagline <em>(optional)</em></span>
+          <input id="tagline" name="tagline" type="text" maxlength="160"
+                 autocomplete="off" placeholder="A small corner of the internet." />
+          <small class="field-err" data-err="tagline"></small>
+        </label>
+
+        <fieldset class="field">
+          <legend>Theme</legend>
+          <div id="themes" class="theme-row" role="radiogroup" aria-label="Visual theme"></div>
+        </fieldset>
+
+        <fieldset class="field">
+          <legend>Links <em>(optional, up to 8)</em></legend>
+          <div id="links" class="links-editor"></div>
+          <button type="button" id="add-link" class="btn">Add link</button>
+          <small class="field-err" data-err="links"></small>
+        </fieldset>
+
+        <label class="field">
+          <span>Admin token</span>
+          <input id="token" name="token" type="password" autocomplete="off"
+                 placeholder="TORII_ADMIN_TOKEN" />
+          <small class="field-hint">Required to save. Found in <code>/opt/torii/env</code>.
+             Kept in memory only — never stored.</small>
+        </label>
+
+        <div class="editor-actions">
+          <button type="submit" id="save" class="btn btn-primary" data-activate="false">Save</button>
+          <button type="submit" id="activate" class="btn btn-primary" data-activate="true">Save &amp; activate</button>
+          <button type="button" id="reset-root" class="btn btn-ghost">Reset to launcher</button>
+        </div>
+        <p id="status" class="editor-status" role="status" aria-live="polite"></p>
+      </form>
+
+      <section class="editor-preview" aria-label="Live preview">
+        <div class="preview-bar"><span>Preview</span></div>
+        <iframe id="preview" title="Homepage preview" sandbox="allow-same-origin"></iframe>
+      </section>
+    </div>
+  </main>
+
+  <script type="module" src="/assets/create.js"></script>
+</body>
+</html>

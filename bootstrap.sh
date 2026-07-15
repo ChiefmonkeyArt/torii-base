@@ -38,8 +38,8 @@ die()  { printf "\033[31mxx  %s\033[0m\n" "$*" >&2; exit 1; }
 [[ -n "$TORII_DOMAIN" ]] || die "set TORII_DOMAIN=<yourdomain> in the environment"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[[ -d "$SCRIPT_DIR/launcher" && -d "$SCRIPT_DIR/nginx" && -d "$SCRIPT_DIR/sidecar" && -f "$SCRIPT_DIR/bin/torii" ]] \
-  || die "expected launcher/, nginx/, sidecar/, bin/torii under $SCRIPT_DIR"
+[[ -d "$SCRIPT_DIR/launcher" && -d "$SCRIPT_DIR/nginx" && -d "$SCRIPT_DIR/sidecar" && -f "$SCRIPT_DIR/bin/torii" && -f "$SCRIPT_DIR/lib/wait-for-sidecar.sh" ]] \
+  || die "expected launcher/, nginx/, sidecar/, bin/torii, lib/wait-for-sidecar.sh under $SCRIPT_DIR"
 
 log "Installing base packages"
 export DEBIAN_FRONTEND=noninteractive
@@ -60,6 +60,9 @@ install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT"
 install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT/launcher" "$TORII_ROOT/launcher/assets"
 install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT/nginx-fragments"
 install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT/sidecar"
+# Personal homepage: the sidecar renders index.html here; nginx serves it at /
+# when the homepage is activated as root_app.
+install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT/homepage"
 install -d -m 0755 -o "root"        -g "root"        "$TORII_ROOT/bin"
 
 cp -a "$SCRIPT_DIR/launcher/index.html"        "$TORII_ROOT/launcher/index.html"
@@ -68,7 +71,7 @@ cp -a "$SCRIPT_DIR/sidecar/."                  "$TORII_ROOT/sidecar/"
 cp -a "$SCRIPT_DIR/bin/torii"                  "/usr/local/bin/torii"
 chmod 0755 /usr/local/bin/torii
 
-chown -R "$TORII_USER:$TORII_USER" "$TORII_ROOT/launcher" "$TORII_ROOT/sidecar" "$TORII_ROOT/nginx-fragments"
+chown -R "$TORII_USER:$TORII_USER" "$TORII_ROOT/launcher" "$TORII_ROOT/sidecar" "$TORII_ROOT/nginx-fragments" "$TORII_ROOT/homepage"
 
 log "Generating admin token (if missing)"
 if [[ ! -f "$TORII_ROOT/env" ]]; then
@@ -88,8 +91,15 @@ if [[ ! -f "$TORII_ROOT/registry.json" ]]; then
   chown "$TORII_USER:$TORII_USER" "$TORII_ROOT/registry.json"
 fi
 [[ -f "$TORII_ROOT/root_app.conf" ]] || {
-  cat > "$TORII_ROOT/root_app.conf" <<'EOF'
-# root_app is unset; launcher owns /.
+  # This include is the single owner of `location = /` (torii.conf has no
+  # fallback). Default state serves the launcher; the sidecar rewrites it on
+  # set-root / homepage activation and also reconciles it on boot.
+  cat > "$TORII_ROOT/root_app.conf" <<EOF
+# Written by torii-base bootstrap. root_app is unset; the launcher owns /.
+location = / {
+    root $TORII_ROOT/launcher;
+    try_files /index.html =404;
+}
 EOF
   chown "$TORII_USER:$TORII_USER" "$TORII_ROOT/root_app.conf"
 }
@@ -122,7 +132,25 @@ fi
 log "Installing systemd unit"
 install -m 0644 "$SCRIPT_DIR/systemd/torii-base-sidecar.service" /etc/systemd/system/torii-base-sidecar.service
 systemctl daemon-reload
-systemctl enable --now torii-base-sidecar.service
+systemctl enable torii-base-sidecar.service
+# restart (not `enable --now`) so upgrades actually load the new sidecar code:
+# on an existing install the service is already running, and `enable --now`
+# would be a no-op — the new reconcileRoot() would never run. Restarting here,
+# before the final nginx validate/reload below, lets reconcileRoot() rewrite a
+# stale comment-only root_app.conf into a valid `location = /` block so nginx
+# validates against the correct include.
+systemctl restart torii-base-sidecar.service
+
+# `restart` returns at process exec, not readiness (the unit is Type=simple), so
+# it does NOT guarantee reconcileRoot() has run yet. Block on /torii/healthz
+# before touching nginx: the sidecar reconciles root_app.conf *before* it
+# listens (see sidecar/index.mjs start()), so a healthy response is a hard
+# guarantee the `/` include is correct. Fail closed — if the sidecar never comes
+# up we abort here, before rewriting/reloading nginx, leaving the existing
+# config and current owner of / intact rather than reloading an owner-less root.
+log "Waiting for sidecar readiness (guarantees root_app.conf reconcile before nginx reload)"
+"$SCRIPT_DIR/lib/wait-for-sidecar.sh" "http://127.0.0.1:${TORII_SIDECAR_PORT}/torii/healthz" \
+  || die "sidecar did not become ready; aborting before nginx reload (existing nginx config left intact)"
 
 log "Writing nginx config for $TORII_DOMAIN"
 sed "s#TORII_DOMAIN#$TORII_DOMAIN#g" "$SCRIPT_DIR/nginx/torii.conf" > /etc/nginx/sites-available/torii.conf
