@@ -110,6 +110,14 @@ Recovery: if `root_app` is `homepage` but the rendered file is missing, the
 sidecar resets `/` to the launcher on boot so a broken homepage can never
 strand the domain.
 
+Upgrades: `torii.conf` no longer carries a `location = /` fallback —
+`root_app.conf` is the single owner of `/`, and the sidecar's boot
+reconciliation rewrites a stale (pre-0.1.3, comment-only) `root_app.conf` into
+the correct block. Because that reconcile only runs at process start,
+`bootstrap.sh` **restarts** `torii-base-sidecar.service` on every run (not
+`enable --now`, which is a no-op for an already-running service) so an upgraded
+host loads the new code and fixes its `/` include before the final `nginx -t`.
+
 ---
 
 ## Layout

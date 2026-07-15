@@ -162,3 +162,25 @@ test('reconcile is a no-op when homepage html is present', async () => {
   await reconcileRoot();
   assert.equal((await readReg()).root_app, 'homepage');
 });
+
+// Upgrade regression: a pre-0.1.3 install has a comment-only root_app.conf stub
+// and registry root_app=null. torii.conf no longer carries a `location = /`
+// fallback, so after upgrade `/` has no owner until reconcileRoot() rewrites the
+// stub into the launcher block. bootstrap.sh restarts the sidecar to trigger
+// this; here we prove reconcileRoot() alone recovers a launcher-owned /.
+test('reconcile upgrades a legacy comment-only root_app.conf to the launcher block', async () => {
+  await app.inject({ method: 'POST', url: '/torii/set-root', headers: auth, payload: { root_app: null } });
+  // Simulate the legacy stub: comments only, no location block at all.
+  await writeFile(
+    join(root, 'root_app.conf'),
+    '# Written by torii-base bootstrap. root_app is unset; the launcher owns /.\n',
+    'utf8',
+  );
+
+  await reconcileRoot();
+
+  const conf = await readConf();
+  assert.match(conf, /location = \/ \{/);
+  assert.match(conf, /root .*launcher;/);
+  assert.match(conf, /try_files \/index\.html =404;/);
+});

@@ -132,7 +132,14 @@ fi
 log "Installing systemd unit"
 install -m 0644 "$SCRIPT_DIR/systemd/torii-base-sidecar.service" /etc/systemd/system/torii-base-sidecar.service
 systemctl daemon-reload
-systemctl enable --now torii-base-sidecar.service
+systemctl enable torii-base-sidecar.service
+# restart (not `enable --now`) so upgrades actually load the new sidecar code:
+# on an existing install the service is already running, and `enable --now`
+# would be a no-op — the new reconcileRoot() would never run. Restarting here,
+# before the final nginx validate/reload below, lets reconcileRoot() rewrite a
+# stale comment-only root_app.conf into a valid `location = /` block so nginx
+# validates against the correct include.
+systemctl restart torii-base-sidecar.service
 
 log "Writing nginx config for $TORII_DOMAIN"
 sed "s#TORII_DOMAIN#$TORII_DOMAIN#g" "$SCRIPT_DIR/nginx/torii.conf" > /etc/nginx/sites-available/torii.conf
