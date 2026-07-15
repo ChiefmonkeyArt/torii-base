@@ -38,8 +38,8 @@ die()  { printf "\033[31mxx  %s\033[0m\n" "$*" >&2; exit 1; }
 [[ -n "$TORII_DOMAIN" ]] || die "set TORII_DOMAIN=<yourdomain> in the environment"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[[ -d "$SCRIPT_DIR/launcher" && -d "$SCRIPT_DIR/nginx" && -d "$SCRIPT_DIR/sidecar" && -f "$SCRIPT_DIR/bin/torii" ]] \
-  || die "expected launcher/, nginx/, sidecar/, bin/torii under $SCRIPT_DIR"
+[[ -d "$SCRIPT_DIR/launcher" && -d "$SCRIPT_DIR/nginx" && -d "$SCRIPT_DIR/sidecar" && -f "$SCRIPT_DIR/bin/torii" && -f "$SCRIPT_DIR/lib/wait-for-sidecar.sh" ]] \
+  || die "expected launcher/, nginx/, sidecar/, bin/torii, lib/wait-for-sidecar.sh under $SCRIPT_DIR"
 
 log "Installing base packages"
 export DEBIAN_FRONTEND=noninteractive
@@ -140,6 +140,17 @@ systemctl enable torii-base-sidecar.service
 # stale comment-only root_app.conf into a valid `location = /` block so nginx
 # validates against the correct include.
 systemctl restart torii-base-sidecar.service
+
+# `restart` returns at process exec, not readiness (the unit is Type=simple), so
+# it does NOT guarantee reconcileRoot() has run yet. Block on /torii/healthz
+# before touching nginx: the sidecar reconciles root_app.conf *before* it
+# listens (see sidecar/index.mjs start()), so a healthy response is a hard
+# guarantee the `/` include is correct. Fail closed — if the sidecar never comes
+# up we abort here, before rewriting/reloading nginx, leaving the existing
+# config and current owner of / intact rather than reloading an owner-less root.
+log "Waiting for sidecar readiness (guarantees root_app.conf reconcile before nginx reload)"
+"$SCRIPT_DIR/lib/wait-for-sidecar.sh" "http://127.0.0.1:${TORII_SIDECAR_PORT}/torii/healthz" \
+  || die "sidecar did not become ready; aborting before nginx reload (existing nginx config left intact)"
 
 log "Writing nginx config for $TORII_DOMAIN"
 sed "s#TORII_DOMAIN#$TORII_DOMAIN#g" "$SCRIPT_DIR/nginx/torii.conf" > /etc/nginx/sites-available/torii.conf

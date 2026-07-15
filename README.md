@@ -116,7 +116,12 @@ reconciliation rewrites a stale (pre-0.1.3, comment-only) `root_app.conf` into
 the correct block. Because that reconcile only runs at process start,
 `bootstrap.sh` **restarts** `torii-base-sidecar.service` on every run (not
 `enable --now`, which is a no-op for an already-running service) so an upgraded
-host loads the new code and fixes its `/` include before the final `nginx -t`.
+host loads the new code and fixes its `/` include. Because the unit is
+`Type=simple`, `restart` returns before reconcile has run, so bootstrap then
+blocks on `/torii/healthz` (via `lib/wait-for-sidecar.sh`) — the sidecar
+reconciles `root_app.conf` *before* it listens, so a healthy response proves `/`
+has a valid owner. bootstrap only validates/reloads nginx after that gate, and
+fails closed (leaving the existing config intact) if the sidecar never comes up.
 
 ---
 
