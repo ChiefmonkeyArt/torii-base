@@ -75,8 +75,9 @@ button; picking a homepage flips `root_app` in `registry.json` and the
 next nginx reload swaps the `/` include from the launcher to a 302
 redirect.
 
-The launcher is dark-first (Torii vermilion `#d94f2c`) and has no
-dependencies — vanilla HTML/CSS/JS.
+The launcher is dark-first — a privacy-first amber/orange/bronze palette
+(Continuum amber, `hsl(38 92% 58%)`) — and has no dependencies: vanilla
+HTML/CSS/JS, no third-party CDNs, fonts, or telemetry.
 
 ---
 
