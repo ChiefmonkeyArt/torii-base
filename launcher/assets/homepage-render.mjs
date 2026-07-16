@@ -20,6 +20,7 @@ export const LIMITS = Object.freeze({
 // gradients + accent, not from external assets or fonts. All values are
 // baked into an inline <style> at render time, so there are no runtime deps.
 export const THEMES = Object.freeze([
+  { id: 'continuum', label: 'Continuum (Amber)', bg: '#0c0a07', card: '#16120c', fg: '#f2ece2', mute: '#a89a86', accent: '#f3a72b', glow: 'radial-gradient(1100px 620px at 18% -12%, #2a1c0a 0%, transparent 62%)' },
   { id: 'vermilion', label: 'Vermilion (Torii)', bg: '#0b0d10', card: '#12161b', fg: '#e8ecef', mute: '#8b95a1', accent: '#d94f2c', glow: 'radial-gradient(1200px 600px at 20% -10%, #2a1109 0%, transparent 60%)' },
   { id: 'midnight', label: 'Midnight', bg: '#080b1a', card: '#111634', fg: '#e6e9ff', mute: '#8890c0', accent: '#6c7bff', glow: 'radial-gradient(1000px 500px at 80% -10%, #1a2050 0%, transparent 55%)' },
   { id: 'sakura', label: 'Sakura', bg: '#fff5f7', card: '#ffffff', fg: '#3a1e28', mute: '#9c6b78', accent: '#e5578a', glow: 'radial-gradient(1000px 500px at 10% -10%, #ffd9e6 0%, transparent 60%)' },
@@ -28,7 +29,7 @@ export const THEMES = Object.freeze([
 ]);
 
 const THEME_IDS = new Set(THEMES.map((t) => t.id));
-export const DEFAULT_THEME = 'vermilion';
+export const DEFAULT_THEME = 'continuum';
 
 export const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',

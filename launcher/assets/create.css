@@ -58,7 +58,7 @@
 
 .editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 #activate { background: transparent; color: var(--accent); border-color: var(--accent); }
-#activate:hover { background: var(--accent); color: #fff; }
+#activate:hover { background: var(--accent); color: var(--accent-ink); }
 
 .editor-status { font-size: 13px; min-height: 1.2em; margin: 4px 0 0; color: var(--fg-mute); }
 .editor-status.is-ok { color: #4ec98a; }
