@@ -146,7 +146,7 @@ function showFieldErrors(errors) {
   }
 }
 
-async function save(activate) {
+async function save() {
   const token = $('#token').value.trim();
   if (!token) { setStatus('Enter your admin token to save.', 'err'); $('#token').focus(); return; }
 
@@ -158,21 +158,28 @@ async function save(activate) {
     return;
   }
   clearFieldErrors();
-  setStatus(activate ? 'Saving and activating…' : 'Saving…');
+  setStatus('Saving and activating…');
   try {
     const res = await fetch(SAVE_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify({ ...config, activate }),
+      body: JSON.stringify({ ...config, activate: true }),
     });
-    if (res.status === 401 || res.status === 403) { setStatus('Admin token rejected.', 'err'); return; }
+    if (res.status === 401 || res.status === 403) { setStatus('Admin token rejected — paste only the value after the "=".', 'err'); return; }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      // The content is already persisted before activation runs; a 500 here
+      // means activation (going live at /) failed — most commonly an nginx
+      // reload — not that the save itself failed. Say what actually happened.
+      if (res.status === 500 && data.saved === true) {
+        setStatus('Saved, but not live yet — nginx reload failed. Run `sudo nginx -t` on the server.', 'warn');
+        return;
+      }
       if (Array.isArray(data.errors)) showFieldErrors(data.errors);
       setStatus(`Could not save (${res.status}).`, 'err');
       return;
     }
-    setStatus(activate ? 'Saved. Your homepage is now live at /.' : 'Saved.', 'ok');
+    setStatus('Saved. Your homepage is now live at /.', 'ok');
   } catch {
     setStatus('Network error — is the sidecar running?', 'err');
   }
@@ -188,7 +195,7 @@ async function resetRoot() {
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify({ root_app: null }),
     });
-    if (res.status === 401 || res.status === 403) { setStatus('Admin token rejected.', 'err'); return; }
+    if (res.status === 401 || res.status === 403) { setStatus('Admin token rejected — paste only the value after the "=".', 'err'); return; }
     if (!res.ok) { setStatus(`Could not reset (${res.status}).`, 'err'); return; }
     setStatus('Homepage reset. The launcher owns / again.', 'ok');
   } catch {
@@ -225,8 +232,7 @@ async function load() {
 
 $('#form').addEventListener('submit', (ev) => {
   ev.preventDefault();
-  const activate = ev.submitter?.getAttribute('data-activate') === 'true';
-  save(activate);
+  save();
 });
 $('#add-link').addEventListener('click', () => addLink());
 $('#reset-root').addEventListener('click', resetRoot);

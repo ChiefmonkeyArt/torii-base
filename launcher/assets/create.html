@@ -65,13 +65,12 @@
           <input id="token" name="token" type="password" autocomplete="off"
                  placeholder="TORII_ADMIN_TOKEN" />
           <small class="field-hint">Required to save. Shown once at the end of install; if you
-             missed it, run <code>sudo grep '^TORII_ADMIN_TOKEN=' /opt/torii/env</code> on the
-             server and paste the value. Kept in memory only — never stored.</small>
+             missed it, run <code>sudo grep '^TORII_ADMIN_TOKEN=' /opt/torii/env | cut -d= -f2-</code>
+             on the server and paste just the value after the <code>=</code>. Kept in memory only — never stored.</small>
         </label>
 
         <div class="editor-actions">
-          <button type="submit" id="save" class="btn btn-primary" data-activate="false">Save</button>
-          <button type="submit" id="activate" class="btn btn-primary" data-activate="true">Save &amp; activate</button>
+          <button type="submit" id="save" class="btn btn-primary">Save &amp; activate</button>
           <button type="button" id="reset-root" class="btn btn-ghost">Reset to launcher</button>
         </div>
         <p id="status" class="editor-status" role="status" aria-live="polite"></p>
