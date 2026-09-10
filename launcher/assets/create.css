@@ -64,6 +64,9 @@
 .editor-status.is-ok { color: #4ec98a; }
 .editor-status.is-err { color: #ff7a5c; }
 .editor-status.is-warn { color: #e8b45c; }
+.admin-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.admin-state { font-size: 13px; color: var(--fg-mute); }
+.admin-state.is-ok { color: #4ec98a; }
 
 .editor-preview {
   border: 1px solid var(--line);

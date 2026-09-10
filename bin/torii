@@ -10,8 +10,9 @@
 #   torii doctor                # sanity-check the install
 #
 # Each command is a thin wrapper around the torii-base sidecar's HTTP API.
-# The CLI reads TORII_ADMIN_TOKEN from /opt/torii/env (root-only 0600 file)
-# so installers don't have to pass it on the command line.
+# register/unregister hit the sidecar on loopback as root — the installer owns
+# the box, so no login is needed (nginx blocks these routes publicly). Homepage
+# editing and set-root are done in the browser with a NIP-07 sign-in.
 
 set -euo pipefail
 
@@ -27,17 +28,8 @@ require_root() {
   fi
 }
 
-load_env() {
-  if [[ -f "$ENV_FILE" ]]; then
-    # shellcheck disable=SC1090
-    set -a; source "$ENV_FILE"; set +a
-  fi
-  [[ -n "${TORII_ADMIN_TOKEN:-}" ]] || die "TORII_ADMIN_TOKEN not set (missing $ENV_FILE?)"
-}
-
-curl_auth() {
+curl_svc() {
   curl --silent --show-error --fail-with-body \
-    -H "Authorization: Bearer ${TORII_ADMIN_TOKEN}" \
     -H "content-type: application/json" \
     "$@"
 }
@@ -53,32 +45,26 @@ cmd_register() {
       *) die "unknown flag: $1" ;;
     esac
   done
-  require_root; load_env
+  require_root
   local payload
   payload=$(python3 -c 'import json,sys; print(json.dumps({"name":sys.argv[1],"display_name":sys.argv[2],"description":sys.argv[3],"version":sys.argv[4]}))' \
     "$name" "$display" "$desc" "$version")
-  curl_auth -X POST "${SIDECAR_URL}/torii/apps" -d "$payload"
+  curl_svc -X POST "${SIDECAR_URL}/torii/apps" -d "$payload"
   echo
 }
 
 cmd_unregister() {
   local name="$1"
-  require_root; load_env
-  curl_auth -X DELETE "${SIDECAR_URL}/torii/apps/${name}"
+  require_root
+  curl_svc -X DELETE "${SIDECAR_URL}/torii/apps/${name}"
   echo
 }
 
 cmd_set_root() {
-  local target="$1"
-  require_root; load_env
-  local payload
-  if [[ "$target" == "none" ]] || [[ -z "$target" ]]; then
-    payload='{"root_app":null}'
-  else
-    payload=$(python3 -c 'import json,sys; print(json.dumps({"root_app":sys.argv[1]}))' "$target")
-  fi
-  curl_auth -X POST "${SIDECAR_URL}/torii/set-root" -d "$payload"
-  echo
+  echo "torii: set-root is done in the browser — open the launcher, pick an app"
+  echo "       tile, and use \"Set as homepage\" (signed with your NIP-07 signer as"
+  echo "       the install admin npub)."
+  return 0
 }
 
 cmd_reload() {
@@ -171,7 +157,7 @@ Commands:
   register <name> [--display "..."] [--desc "..."] [--version X]
                          Register an installed app (fragment must already exist)
   unregister <name>      Remove an app's registration
-  set-root <name|none>   Promote an app to owner of / (or reset to launcher)
+  set-root               Homepage / root app is set in the browser (NIP-07 sign-in)
   reload                 Validate and reload nginx
   status                 Show registry + sidecar health
   doctor                 Sanity-check the installation
@@ -179,7 +165,6 @@ Commands:
 Env:
   TORII_ROOT             Default /opt/torii
   TORII_SIDECAR_URL      Default http://127.0.0.1:8780
-  TORII_ADMIN_TOKEN      Loaded from $TORII_ROOT/env
 USAGE
       ;;
     *) die "unknown command: $cmd (try: torii help)" ;;

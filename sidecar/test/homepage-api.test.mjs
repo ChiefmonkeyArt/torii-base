@@ -2,6 +2,7 @@
 // promotes the homepage to / with the static-serve include, the reserved
 // target is guarded until configured, and boot reconciliation recovers a
 // dangling homepage root. Regression: set-root for real apps is untouched.
+// Admin auth goes through the NIP-07 sign-in flow (auth-helper), not a static token.
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,13 +10,12 @@ import { mkdtemp, writeFile, readFile, rm, mkdir, unlink } from 'node:fs/promise
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ADMIN_NPUB, SESSION_SECRET, authHeaders } from './auth-helper.mjs';
 
-const TOKEN = 'test-admin-token';
 let root;
 let app;
 let reconcileRoot;
 
-const auth = { authorization: `Bearer ${TOKEN}` };
 const readReg = async () => JSON.parse(await readFile(join(root, 'registry.json'), 'utf8'));
 const readConf = async () => readFile(join(root, 'root_app.conf'), 'utf8');
 
@@ -27,7 +27,8 @@ before(async () => {
     'utf8',
   );
   process.env.TORII_ROOT = root;
-  process.env.TORII_ADMIN_TOKEN = TOKEN;
+  process.env.TORII_ADMIN_NPUB = ADMIN_NPUB;
+  process.env.TORII_SESSION_SECRET = SESSION_SECRET;
   process.env.TORII_SKIP_NGINX_RELOAD = '1';
   ({ app, reconcileRoot } = await import('../index.mjs'));
   await app.ready();
@@ -53,7 +54,7 @@ test('save requires admin auth', async () => {
 
 test('invalid homepage is rejected with field errors and writes nothing', async () => {
   const res = await app.inject({
-    method: 'POST', url: '/torii/homepage', headers: auth,
+    method: 'POST', url: '/torii/homepage', headers: await authHeaders(app),
     payload: { title: '', links: [{ label: 'bad', url: 'javascript:1' }] },
   });
   assert.equal(res.statusCode, 400);
@@ -64,7 +65,7 @@ test('invalid homepage is rejected with field errors and writes nothing', async 
 
 test('activating before a homepage exists is refused (409)', async () => {
   const res = await app.inject({
-    method: 'POST', url: '/torii/set-root', headers: auth,
+    method: 'POST', url: '/torii/set-root', headers: await authHeaders(app),
     payload: { root_app: 'homepage' },
   });
   assert.equal(res.statusCode, 409);
@@ -74,7 +75,7 @@ test('activating before a homepage exists is refused (409)', async () => {
 
 test('save persists config + renders static HTML atomically', async () => {
   const res = await app.inject({
-    method: 'POST', url: '/torii/homepage', headers: auth,
+    method: 'POST', url: '/torii/homepage', headers: await authHeaders(app),
     payload: { title: 'My Home', tagline: 'hi', theme: 'matrix', links: [{ label: 'Quest', url: '/quest/' }] },
   });
   assert.equal(res.statusCode, 200);
@@ -98,7 +99,7 @@ test('save persists config + renders static HTML atomically', async () => {
 
 test('save with activate=true promotes homepage to / via static serve', async () => {
   const res = await app.inject({
-    method: 'POST', url: '/torii/homepage', headers: auth,
+    method: 'POST', url: '/torii/homepage', headers: await authHeaders(app),
     payload: { title: 'Live Home', theme: 'sunset', activate: true },
   });
   assert.equal(res.statusCode, 200);
@@ -120,10 +121,10 @@ test('GET homepage.json returns the saved config', async () => {
 
 test('set-root homepage works once configured', async () => {
   // reset to launcher first
-  await app.inject({ method: 'POST', url: '/torii/set-root', headers: auth, payload: { root_app: null } });
+  await app.inject({ method: 'POST', url: '/torii/set-root', headers: await authHeaders(app), payload: { root_app: null } });
   assert.equal((await readReg()).root_app, null);
   const res = await app.inject({
-    method: 'POST', url: '/torii/set-root', headers: auth, payload: { root_app: 'homepage' },
+    method: 'POST', url: '/torii/set-root', headers: await authHeaders(app), payload: { root_app: 'homepage' },
   });
   assert.equal(res.statusCode, 200);
   assert.equal((await readReg()).root_app, 'homepage');
@@ -131,20 +132,20 @@ test('set-root homepage works once configured', async () => {
 
 test('regression: set-root still promotes a real app and blocks continuum', async () => {
   const ok = await app.inject({
-    method: 'POST', url: '/torii/set-root', headers: auth, payload: { root_app: 'quest' },
+    method: 'POST', url: '/torii/set-root', headers: await authHeaders(app), payload: { root_app: 'quest' },
   });
   assert.equal(ok.statusCode, 200);
   assert.equal((await readReg()).root_app, 'quest');
 
   const blocked = await app.inject({
-    method: 'POST', url: '/torii/set-root', headers: auth, payload: { root_app: 'continuum' },
+    method: 'POST', url: '/torii/set-root', headers: await authHeaders(app), payload: { root_app: 'continuum' },
   });
   assert.equal(blocked.statusCode, 403);
 });
 
 test('reconcile resets a dangling homepage root back to the launcher', async () => {
   // Point root at homepage, then delete the rendered file to simulate loss.
-  await app.inject({ method: 'POST', url: '/torii/set-root', headers: auth, payload: { root_app: 'homepage' } });
+  await app.inject({ method: 'POST', url: '/torii/set-root', headers: await authHeaders(app), payload: { root_app: 'homepage' } });
   assert.equal((await readReg()).root_app, 'homepage');
   await unlink(join(root, 'homepage', 'index.html'));
 
@@ -158,7 +159,7 @@ test('reconcile resets a dangling homepage root back to the launcher', async () 
 test('reconcile is a no-op when homepage html is present', async () => {
   await mkdir(join(root, 'homepage'), { recursive: true });
   await writeFile(join(root, 'homepage', 'index.html'), '<!doctype html>ok', 'utf8');
-  await app.inject({ method: 'POST', url: '/torii/set-root', headers: auth, payload: { root_app: 'homepage' } });
+  await app.inject({ method: 'POST', url: '/torii/set-root', headers: await authHeaders(app), payload: { root_app: 'homepage' } });
   await reconcileRoot();
   assert.equal((await readReg()).root_app, 'homepage');
 });
@@ -169,7 +170,7 @@ test('reconcile is a no-op when homepage html is present', async () => {
 // stub into the launcher block. bootstrap.sh restarts the sidecar to trigger
 // this; here we prove reconcileRoot() alone recovers a launcher-owned /.
 test('reconcile upgrades a legacy comment-only root_app.conf to the launcher block', async () => {
-  await app.inject({ method: 'POST', url: '/torii/set-root', headers: auth, payload: { root_app: null } });
+  await app.inject({ method: 'POST', url: '/torii/set-root', headers: await authHeaders(app), payload: { root_app: null } });
   // Simulate the legacy stub: comments only, no location block at all.
   await writeFile(
     join(root, 'root_app.conf'),

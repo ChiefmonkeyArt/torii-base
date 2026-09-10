@@ -25,14 +25,16 @@ and root (or a passwordless-sudo user).
 ```bash
 git clone https://github.com/ChiefmonkeyArt/torii-base.git
 cd torii-base
-sudo ./bootstrap.sh --domain your-domain.com --email you@your-domain.com
+# Your install admin npub — a NIP-07 signer's public key (never an nsec):
+export TORII_ADMIN_NPUB=npub1...
+sudo -E ./bootstrap.sh --domain your-domain.com --email you@your-domain.com
 ```
 
 What it does:
 
 - Installs `nginx`, `certbot`, `node@22`, and common utilities.
 - Creates a `torii` OS user for the sidecar.
-- Writes `/opt/torii/env` with a generated `TORII_ADMIN_TOKEN`.
+- Writes `/opt/torii/env` with your admin `npub` and a generated session secret.
 - Installs the launcher, the main nginx server block, and the sidecar.
 - Obtains a Let's Encrypt certificate (skip with `--no-letsencrypt`).
 - Enables `torii-base-sidecar.service`.
@@ -48,15 +50,16 @@ The sidecar exposes a small REST API on `127.0.0.1:8780`. Everything you
 need day-to-day is wrapped by the `torii` CLI on the host.
 
 ```bash
-sudo torii register continuum "Continuum" /continuum "App builder + agent"
-sudo torii set-root continuum          # make /continuum the site homepage
-sudo torii set-root homepage           # activate the personal homepage at /
-sudo torii set-root launcher           # go back to the launcher at /
+sudo torii register continuum --display "Continuum" --desc "App builder + agent" --version 0.3.0
 sudo torii unregister quest
 sudo torii status
 sudo torii doctor
 sudo torii reload                      # re-validate + reload nginx
 ```
+
+Setting the homepage / root app is done in the browser: open the launcher, pick
+a tile, and use "Set as homepage" (signed with your NIP-07 signer — the same
+npub you set at install).
 
 `torii doctor` verifies:
 
@@ -104,8 +107,8 @@ Security: the homepage never accepts or renders arbitrary HTML/JS. All
 content is escaped, lengths are capped, and link URLs must be a site-relative
 `/path` or an `http(s)` URL. The rendered document contains **no scripts** and
 ships a strict CSP (`script-src 'none'`). No third-party CDNs, fonts, or
-telemetry. Admin auth (Bearer token) is required to save, activate, or reset,
-same as `set-root`.
+telemetry. Admin auth (a NIP-07 sign-in proving you hold your install npub) is
+required to save, activate, or reset, same as `set-root`.
 
 Recovery: if `root_app` is `homepage` but the rendered file is missing, the
 sidecar resets `/` to the launcher on boot so a broken homepage can never
@@ -130,7 +133,7 @@ fails closed (leaving the existing config intact) if the sidecar never comes up.
 
 ```
 /opt/torii/
-  env                            # TORII_ADMIN_TOKEN, TORII_DOMAIN, etc.
+  env                            # TORII_ADMIN_NPUB, TORII_SESSION_SECRET, TORII_DOMAIN, etc.
   registry.json                  # apps registered on this host
   root_app.conf                  # nginx include for `/` (launcher/redirect/homepage)
   homepage.json                  # saved personal-homepage config
@@ -165,13 +168,16 @@ does all of this automatically.
 
 - The sidecar binds to `127.0.0.1:8780` only. All external traffic goes
   through nginx.
-- Admin endpoints (`/torii/set-root`, `/torii/apps`, `DELETE /torii/apps/:name`)
-  require a Bearer token — the value in `/opt/torii/env`.
+- Ownership is your install `npub`. `/torii/homepage` and `/torii/set-root`
+  require a NIP-07 sign-in proving you hold that key — no shared secret to copy.
+- Registration (`/torii/apps`, `DELETE /torii/apps/:name`) is root/loopback only:
+  nginx blocks those write routes publicly, so only the on-box `torii register`
+  (as root) can add or remove app tiles.
 - Systemd unit is hardened: `NoNewPrivileges`, `ProtectSystem=full`,
   `ReadWritePaths=/opt/torii`.
 - The launcher and `apps.json` are public. If you don't want the world to
-  know what you host, use `torii set-root <app>` so `/` redirects to your
-  chosen app and never shows the launcher.
+  know what you host, set an app as homepage in the browser so `/` redirects
+  to your chosen app and never shows the launcher.
 
 ---
 

@@ -3,6 +3,8 @@
 // Endpoints (all served under /torii/*):
 //   GET  /torii/apps.json     → { apps: [...], root_app: string|null, version }
 //   GET  /torii/healthz       → liveness
+//   POST /torii/auth/challenge → sign-in challenge (kind 22242)
+//   POST /torii/auth/verify    → verify signed challenge → session token
 //   POST /torii/set-root      → change root_app (admin-only)
 //
 // State lives entirely on disk under $TORII_ROOT (default /opt/torii):
@@ -10,10 +12,11 @@
 //   root_app.conf             → nginx include, rewritten by set-root
 //   nginx-fragments/*.conf    → per-app fragments (read-only here)
 //
-// Admin auth: `Bearer <token>` in Authorization header. Token is loaded from
-// $TORII_ADMIN_TOKEN env at boot. If the env is unset, admin endpoints refuse
-// all requests. GET endpoints are public (they only expose which apps exist,
-// same info the launcher renders anyway).
+// Admin auth: NIP-07 sign-in. The operator's signer signs a kind-22242
+// challenge through window.nostr; the sidecar accepts it only when the pubkey
+// is the admin npub recorded at install (core/auth.mjs), then mints a
+// short-lived HMAC session token carried as `Bearer <token>`. GET endpoints
+// are public (they only expose which apps exist — the launcher renders it anyway).
 
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
@@ -25,6 +28,7 @@ import { join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { validateHomepage, renderHomepage } from '../launcher/assets/homepage-render.mjs';
+import { createAuth } from './core/auth.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -36,8 +40,16 @@ const HOMEPAGE_DIR = join(TORII_ROOT, 'homepage');
 const HOMEPAGE_HTML = join(HOMEPAGE_DIR, 'index.html');
 const PORT = Number(process.env.TORII_SIDECAR_PORT || 8780);
 const HOST = process.env.TORII_SIDECAR_HOST || '127.0.0.1';
-const ADMIN_TOKEN = process.env.TORII_ADMIN_TOKEN || '';
-const VERSION = '0.1.8';
+const VERSION = '0.1.9';
+
+// Admin identity is the operator's npub, not a shared secret. createAuth throws
+// (fail closed) if the npub is absent or undecodable, so a misconfigured env
+// never boots with an open admin surface.
+const auth = createAuth({
+  admin_npub: process.env.TORII_ADMIN_NPUB || '',
+  session_secret: process.env.TORII_SESSION_SECRET || '',
+  session_ttl_sec: Number(process.env.TORII_SESSION_TTL_SEC) || undefined,
+});
 
 const APP_NAME_RE = /^[a-z][a-z0-9-]{1,31}$/;
 
@@ -137,16 +149,18 @@ async function nginxReload() {
 }
 
 function requireAdmin(req, reply) {
-  if (!ADMIN_TOKEN) {
-    reply.code(503).send({ error: 'admin_token_unset' });
-    return false;
-  }
-  const auth = req.headers.authorization || '';
-  const m = /^Bearer\s+(.+)$/i.exec(auth);
-  if (!m || m[1] !== ADMIN_TOKEN) {
+  const header = req.headers.authorization || '';
+  const m = /^Bearer\s+(.+)$/i.exec(header);
+  if (!m) {
     reply.code(401).send({ error: 'unauthorized' });
     return false;
   }
+  const check = auth.verifySessionToken(m[1]);
+  if (!check.ok) {
+    reply.code(401).send({ error: 'unauthorized' });
+    return false;
+  }
+  req.session = { npub: check.npub, exp: check.exp };
   return true;
 }
 
@@ -159,6 +173,30 @@ app.get('/torii/healthz', async () => ({ ok: true, version: VERSION }));
 app.get('/torii/apps.json', async () => {
   const reg = await readRegistry();
   return { version: VERSION, apps: reg.apps, root_app: reg.root_app };
+});
+
+// ─────────────────────────────────────────────────────────────
+// Auth endpoints (NIP-07 sign-in)
+// ─────────────────────────────────────────────────────────────
+
+// Issue a single-use challenge the operator's NIP-07 signer will sign.
+app.post('/torii/auth/challenge', async (req) => {
+  const { challenge, expires_in } = auth.issueChallenge(req.ip);
+  return { challenge, expires_in, kind: 22242 };
+});
+
+// Verify a signed kind-22242 challenge event. Only a signature from the admin
+// npub is accepted; on success mints a session token for subsequent calls.
+app.post('/torii/auth/verify', async (req, reply) => {
+  const event = req.body?.event;
+  if (!event) {
+    return reply.code(400).send({ ok: false, code: 'malformed_event', error: 'body.event required' });
+  }
+  const result = await auth.verifyChallenge(event);
+  if (!result.ok) {
+    return reply.code(401).send({ ok: false, code: result.code, error: result.reason });
+  }
+  return { ok: true, token: result.token, expires_at: result.expires_at };
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -245,9 +283,12 @@ app.post('/torii/homepage', async (req, reply) => {
 });
 
 // POST /torii/apps — registrar for install scripts. Idempotent upsert by name.
-// Called by each app installer after it writes its nginx fragment.
+// Called by each app installer after it writes its nginx fragment. Registration
+// is root/loopback-only: nginx never proxies these write routes, so the only
+// caller is `torii register` running on the box — the installer owns the box, so
+// there is no login here. Public ownership claims (homepage + set-root) go
+// through the NIP-07 sign-in above.
 app.post('/torii/apps', async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
   const { name, display_name, description, version } = req.body || {};
   if (typeof name !== 'string' || !APP_NAME_RE.test(name)) {
     return reply.code(400).send({ error: 'invalid_name' });
@@ -280,7 +321,6 @@ app.post('/torii/apps', async (req, reply) => {
 // DELETE /torii/apps/:name — removes registration. Fragment removal is the
 // installer's job; we just drop the row and reload.
 app.delete('/torii/apps/:name', async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
   const { name } = req.params;
   if (!APP_NAME_RE.test(name)) return reply.code(400).send({ error: 'invalid_name' });
   const reg = await readRegistry();

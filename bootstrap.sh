@@ -11,7 +11,7 @@
 #   1. apt-installs: nginx, certbot, python3-certbot-nginx, curl, jq, ca-certificates
 #   2. Creates the `torii` system user and /opt/torii tree
 #   3. Copies launcher/, nginx/, bin/torii, sidecar/ from the repo into /opt/torii
-#   4. Generates TORII_ADMIN_TOKEN and writes /opt/torii/env (0600, root:torii)
+#   4. Reads TORII_ADMIN_NPUB, generates TORII_SESSION_SECRET, writes /opt/torii/env
 #   5. Installs the sidecar's Node deps
 #   6. Writes systemd unit for torii-base-sidecar.service and enables it
 #   7. Writes /etc/nginx/sites-available/torii.conf, symlinks, removes default
@@ -29,6 +29,7 @@ TORII_SIDECAR_PORT="${TORII_SIDECAR_PORT:-8780}"
 TORII_DOMAIN="${TORII_DOMAIN:-}"
 LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-}"
 SKIP_CERTBOT="${SKIP_CERTBOT:-0}"
+TORII_ADMIN_NPUB="${TORII_ADMIN_NPUB:-}"
 
 log()  { printf "\033[36m==>\033[0m %s\n" "$*"; }
 warn() { printf "\033[33m--  %s\033[0m\n" "$*" >&2; }
@@ -36,6 +37,8 @@ die()  { printf "\033[31mxx  %s\033[0m\n" "$*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "bootstrap must run as root"
 [[ -n "$TORII_DOMAIN" ]] || die "set TORII_DOMAIN=<yourdomain> in the environment"
+[[ "$TORII_ADMIN_NPUB" =~ ^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$ ]] \
+  || die "set TORII_ADMIN_NPUB=npub1... in the environment (torii-suite passes the operator's admin npub)"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -d "$SCRIPT_DIR/launcher" && -d "$SCRIPT_DIR/nginx" && -d "$SCRIPT_DIR/sidecar" && -f "$SCRIPT_DIR/bin/torii" && -f "$SCRIPT_DIR/lib/wait-for-sidecar.sh" ]] \
@@ -73,19 +76,18 @@ chmod 0755 /usr/local/bin/torii
 
 chown -R "$TORII_USER:$TORII_USER" "$TORII_ROOT/launcher" "$TORII_ROOT/sidecar" "$TORII_ROOT/nginx-fragments" "$TORII_ROOT/homepage"
 
-log "Generating admin token (if missing)"
-SHOW_TOKEN=""
+log "Writing $TORII_ROOT/env (admin npub + session secret)"
 if [[ ! -f "$TORII_ROOT/env" ]]; then
-  TOKEN="$(head -c 48 /dev/urandom | base64 | tr -d '=+/' | head -c 48)"
+  SESSION_SECRET="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   cat > "$TORII_ROOT/env" <<EOF
 TORII_ROOT=$TORII_ROOT
-TORII_ADMIN_TOKEN=$TOKEN
+TORII_ADMIN_NPUB=$TORII_ADMIN_NPUB
+TORII_SESSION_SECRET=$SESSION_SECRET
 TORII_SIDECAR_PORT=$TORII_SIDECAR_PORT
 TORII_SIDECAR_HOST=127.0.0.1
 EOF
   chmod 0640 "$TORII_ROOT/env"
   chown root:"$TORII_USER" "$TORII_ROOT/env"
-  SHOW_TOKEN="$TOKEN"
 fi
 
 if [[ ! -f "$TORII_ROOT/registry.json" ]]; then
@@ -190,17 +192,5 @@ systemctl reload nginx
 
 log "Done. Try:  https://$TORII_DOMAIN/"
 
-# Surface a freshly-generated admin token straight onto the operator's screen —
-# once, and ONLY to the controlling terminal, so it can never be captured into a
-# piped/captured install log. The env file stays the single durable copy.
-if [[ -n "${SHOW_TOKEN:-}" ]] && [[ -e /dev/tty ]]; then
-  printf '\n'                                                              > /dev/tty
-  printf 'TORII ADMIN TOKEN — copy it now (shown only once)\n'             > /dev/tty
-  printf '%s\n' "$SHOW_TOKEN"                                              > /dev/tty
-  printf 'Paste this into the launcher "Admin token" field to save your homepage.\n' > /dev/tty
-  printf '(Never written to a log. If you miss it, it is also in %s.)\n' "$TORII_ROOT/env" > /dev/tty
-  printf '\n'                                                              > /dev/tty
-fi
-
-log "Admin token lives at $TORII_ROOT/env (root:$TORII_USER, 0640)"
+log "Admin npub: $TORII_ADMIN_NPUB (sign in on the launcher with your NIP-07 signer)"
 log "Health:     curl http://127.0.0.1:$TORII_SIDECAR_PORT/torii/healthz"

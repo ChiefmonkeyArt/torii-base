@@ -1,11 +1,13 @@
 // Homepage creator — vanilla ESM, no build step. Shares validation +
 // rendering with the sidecar via homepage-render.mjs, so the live preview is
-// exactly what gets saved and served. Admin actions carry a Bearer token the
-// user pastes in; it lives in memory only (never localStorage/cookies).
+// exactly what gets saved and served. Admin actions authenticate with a NIP-07
+// sign-in (admin-session.mjs): the operator signs a challenge with their signer,
+// and the resulting session token is sent as `Bearer <token>`.
 
 import {
   THEMES, LIMITS, DEFAULT_THEME, validateHomepage, renderHomepage,
 } from '/assets/homepage-render.mjs';
+const { getSessionToken, signIn, signOut, isSignedIn } = window.ToriiAdmin;
 
 const HOMEPAGE_URL = '/torii/homepage.json';
 const APPS_URL = '/torii/apps.json';
@@ -26,6 +28,16 @@ const setStatus = (msg, kind = '') => {
   el.textContent = msg;
   el.className = `editor-status${kind ? ' is-' + kind : ''}`;
 };
+
+function renderAdminState() {
+  const signin = $('#admin-signin');
+  if (!signin) return;
+  const signedIn = isSignedIn();
+  signin.hidden = signedIn;
+  $('#admin-signout').hidden = !signedIn;
+  $('#admin-state').textContent = signedIn ? 'Signed in as admin' : '';
+  $('#admin-state').className = `admin-state${signedIn ? ' is-ok' : ''}`;
+}
 
 function readForm() {
   return {
@@ -146,8 +158,17 @@ function showFieldErrors(errors) {
 }
 
 async function save() {
-  const token = $('#token').value.trim();
-  if (!token) { setStatus('Enter your admin token to save.', 'err'); $('#token').focus(); return; }
+  let token = getSessionToken();
+  if (!token) {
+    setStatus('Signing in…', '');
+    try {
+      token = await signIn();
+    } catch (err) {
+      setStatus(err.message || 'Sign-in failed.', 'err');
+      return;
+    }
+    renderAdminState();
+  }
 
   const config = readForm();
   const local = validateHomepage(config);
@@ -164,7 +185,7 @@ async function save() {
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify({ ...config, activate: true }),
     });
-    if (res.status === 401 || res.status === 403) { setStatus('Admin token rejected — paste only the value after the "=".', 'err'); return; }
+    if (res.status === 401 || res.status === 403) { setStatus('Sign-in expired — sign in again to save.', 'err'); renderAdminState(); return; }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       // The content is already persisted before activation runs; a 500 here
@@ -209,6 +230,7 @@ async function load() {
   }
 
   updatePreview();
+  renderAdminState();
 }
 
 $('#form').addEventListener('submit', (ev) => {
@@ -218,5 +240,20 @@ $('#form').addEventListener('submit', (ev) => {
 $('#add-link').addEventListener('click', () => addLink());
 $('#title').addEventListener('input', updatePreview);
 $('#tagline').addEventListener('input', updatePreview);
+$('#admin-signin').addEventListener('click', async () => {
+  setStatus('Signing in…', '');
+  try {
+    await signIn();
+    setStatus('Signed in.', 'ok');
+  } catch (err) {
+    setStatus(err.message || 'Sign-in failed.', 'err');
+  }
+  renderAdminState();
+});
+$('#admin-signout').addEventListener('click', () => {
+  signOut();
+  renderAdminState();
+  setStatus('Signed out.', '');
+});
 
 load();
