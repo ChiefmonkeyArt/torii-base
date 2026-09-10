@@ -74,6 +74,7 @@ chmod 0755 /usr/local/bin/torii
 chown -R "$TORII_USER:$TORII_USER" "$TORII_ROOT/launcher" "$TORII_ROOT/sidecar" "$TORII_ROOT/nginx-fragments" "$TORII_ROOT/homepage"
 
 log "Generating admin token (if missing)"
+SHOW_TOKEN=""
 if [[ ! -f "$TORII_ROOT/env" ]]; then
   TOKEN="$(head -c 48 /dev/urandom | base64 | tr -d '=+/' | head -c 48)"
   cat > "$TORII_ROOT/env" <<EOF
@@ -84,6 +85,7 @@ TORII_SIDECAR_HOST=127.0.0.1
 EOF
   chmod 0640 "$TORII_ROOT/env"
   chown root:"$TORII_USER" "$TORII_ROOT/env"
+  SHOW_TOKEN="$TOKEN"
 fi
 
 if [[ ! -f "$TORII_ROOT/registry.json" ]]; then
@@ -187,5 +189,18 @@ nginx -t
 systemctl reload nginx
 
 log "Done. Try:  https://$TORII_DOMAIN/"
+
+# Surface a freshly-generated admin token straight onto the operator's screen —
+# once, and ONLY to the controlling terminal, so it can never be captured into a
+# piped/captured install log. The env file stays the single durable copy.
+if [[ -n "${SHOW_TOKEN:-}" ]] && [[ -e /dev/tty ]]; then
+  printf '\n'                                                              > /dev/tty
+  printf 'TORII ADMIN TOKEN — copy it now (shown only once)\n'             > /dev/tty
+  printf '%s\n' "$SHOW_TOKEN"                                              > /dev/tty
+  printf 'Paste this into the launcher "Admin token" field to save your homepage.\n' > /dev/tty
+  printf '(Never written to a log. If you miss it, it is also in %s.)\n' "$TORII_ROOT/env" > /dev/tty
+  printf '\n'                                                              > /dev/tty
+fi
+
 log "Admin token lives at $TORII_ROOT/env (root:$TORII_USER, 0640)"
 log "Health:     curl http://127.0.0.1:$TORII_SIDECAR_PORT/torii/healthz"
