@@ -64,8 +64,9 @@
           <span>Admin token</span>
           <input id="token" name="token" type="password" autocomplete="off"
                  placeholder="TORII_ADMIN_TOKEN" />
-          <small class="field-hint">Required to save. Found in <code>/opt/torii/env</code>.
-             Kept in memory only — never stored.</small>
+          <small class="field-hint">Required to save. Shown once at the end of install; if you
+             missed it, run <code>sudo grep '^TORII_ADMIN_TOKEN=' /opt/torii/env</code> on the
+             server and paste the value. Kept in memory only — never stored.</small>
         </label>
 
         <div class="editor-actions">
