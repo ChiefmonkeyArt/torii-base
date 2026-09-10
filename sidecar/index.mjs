@@ -37,7 +37,7 @@ const HOMEPAGE_HTML = join(HOMEPAGE_DIR, 'index.html');
 const PORT = Number(process.env.TORII_SIDECAR_PORT || 8780);
 const HOST = process.env.TORII_SIDECAR_HOST || '127.0.0.1';
 const ADMIN_TOKEN = process.env.TORII_ADMIN_TOKEN || '';
-const VERSION = '0.1.7';
+const VERSION = '0.1.8';
 
 const APP_NAME_RE = /^[a-z][a-z0-9-]{1,31}$/;
 

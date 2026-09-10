@@ -10,7 +10,6 @@ import {
 const HOMEPAGE_URL = '/torii/homepage.json';
 const APPS_URL = '/torii/apps.json';
 const SAVE_URL = '/torii/homepage';
-const SET_ROOT_URL = '/torii/set-root';
 
 // Suggested links for first-class integrations when they're installed. Absent
 // apps are simply not suggested — nothing hard-fails.
@@ -185,24 +184,6 @@ async function save() {
   }
 }
 
-async function resetRoot() {
-  const token = $('#token').value.trim();
-  if (!token) { setStatus('Enter your admin token to reset.', 'err'); $('#token').focus(); return; }
-  setStatus('Resetting homepage to the launcher…');
-  try {
-    const res = await fetch(SET_ROOT_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify({ root_app: null }),
-    });
-    if (res.status === 401 || res.status === 403) { setStatus('Admin token rejected — paste only the value after the "=".', 'err'); return; }
-    if (!res.ok) { setStatus(`Could not reset (${res.status}).`, 'err'); return; }
-    setStatus('Homepage reset. The launcher owns / again.', 'ok');
-  } catch {
-    setStatus('Network error — is the sidecar running?', 'err');
-  }
-}
-
 async function load() {
   renderThemes();
   renderLinks();
@@ -235,7 +216,6 @@ $('#form').addEventListener('submit', (ev) => {
   save();
 });
 $('#add-link').addEventListener('click', () => addLink());
-$('#reset-root').addEventListener('click', resetRoot);
 $('#title').addEventListener('input', updatePreview);
 $('#tagline').addEventListener('input', updatePreview);
 

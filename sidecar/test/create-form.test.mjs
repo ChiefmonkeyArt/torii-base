@@ -1,8 +1,8 @@
 // Frontend: the homepage creator must expose a single primary action. The old
 // two-button split ("Save" vs "Save & activate") confused operators into
-// thinking the token had failed or the form was broken. This guards against a
-// second submit button creeping back, and checks the token hint gives a
-// value-only command (so nobody pastes the `KEY=` prefix and gets a 401).
+// thinking the token had failed or the form was broken, and a separate "Reset
+// to launcher" duplicated the launcher's own "Unset homepage" control. Both are
+// gone: exactly one action button ("Save & activate") remains.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,13 +16,17 @@ const CREATE_HTML = join(
   '..', '..', 'launcher', 'assets', 'create.html',
 );
 
-test('create.html has exactly one submit action, labelled "Save & activate"', async () => {
+test('create.html has a single action: "Save & activate"', async () => {
   const html = await readFile(CREATE_HTML, 'utf8');
   const dom = new JSDOM(html);
-  const buttons = [...dom.window.document.querySelectorAll('button[type="submit"]')];
-  assert.equal(buttons.length, 1, 'expected a single primary submit button');
-  assert.equal(buttons[0].textContent.trim(), 'Save & activate');
-  assert.equal(buttons[0].hasAttribute('data-activate'), false, 'stale data-activate flag is gone');
+  const actions = [...dom.window.document.querySelectorAll('.editor-actions button')];
+  assert.equal(actions.length, 1, 'expected exactly one action button in the footer');
+  assert.equal(actions[0].textContent.trim(), 'Save & activate');
+  assert.equal(actions[0].getAttribute('type'), 'submit');
+  assert.equal(actions[0].hasAttribute('data-activate'), false, 'stale data-activate flag is gone');
+  // The redundant "Reset to launcher" (duplicated by the launcher's own
+  // "Unset homepage") must not come back.
+  assert.equal(dom.window.document.getElementById('reset-root'), null);
 });
 
 test('create.html hint shows a value-only token command', async () => {
