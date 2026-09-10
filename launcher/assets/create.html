@@ -61,12 +61,13 @@
         </fieldset>
 
         <label class="field">
-          <span>Admin token</span>
-          <input id="token" name="token" type="password" autocomplete="off"
-                 placeholder="TORII_ADMIN_TOKEN" />
-          <small class="field-hint">Required to save. Shown once at the end of install; if you
-             missed it, run <code>sudo grep '^TORII_ADMIN_TOKEN=' /opt/torii/env | cut -d= -f2-</code>
-             on the server and paste just the value after the <code>=</code>. Kept in memory only — never stored.</small>
+          <span>Admin sign-in</span>
+          <div class="admin-row">
+            <button type="button" id="admin-signin" class="btn">Sign in with your Nostr signer</button>
+            <button type="button" id="admin-signout" class="btn btn-ghost" hidden>Sign out</button>
+            <span id="admin-state" class="admin-state"></span>
+          </div>
+          <small class="field-hint">You are the owner because the npub in your signer matches the one recorded at install — no secret to paste.</small>
         </label>
 
         <div class="editor-actions">
@@ -82,6 +83,7 @@
     </div>
   </main>
 
+  <script type="module" src="/assets/admin-session.mjs"></script>
   <script type="module" src="/assets/create.js"></script>
 </body>
 </html>

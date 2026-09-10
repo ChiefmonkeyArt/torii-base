@@ -29,7 +29,9 @@ test('create.html has a single action: "Save & activate"', async () => {
   assert.equal(dom.window.document.getElementById('reset-root'), null);
 });
 
-test('create.html hint shows a value-only token command', async () => {
+test('create.html offers NIP-07 sign-in, not a token field', async () => {
   const html = await readFile(CREATE_HTML, 'utf8');
-  assert.match(html, /cut -d= -f2-/);
+  assert.equal(html.includes('id="token"'), false, 'token input must be gone');
+  assert.ok(html.includes('id="admin-signin"'), 'NIP-07 sign-in control must exist');
+  assert.ok(html.includes('admin-session.mjs'), 'session module must be wired');
 });

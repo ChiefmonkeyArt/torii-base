@@ -25,6 +25,16 @@ before(async () => {
   global.window = dom.window;
   global.document = dom.window.document;
   global.requestAnimationFrame = dom.window.requestAnimationFrame || (() => {});
+  // NIP-07 session handle — launcher.js reads window.ToriiAdmin (set by the
+  // admin-session.mjs module in the real page); stub it here so the click
+  // handler can mint/read a token without a live signer.
+  global.window.ToriiAdmin = {
+    getSessionToken: () => 'test-session-token',
+    signIn: async () => 'test-session-token',
+    signOut: () => {},
+    isSignedIn: () => true,
+    hasSigner: () => true,
+  };
   ({ renderTile, isRootAllowed, NO_HOMEPAGE_COPY } = await import(LAUNCHER_JS));
 });
 

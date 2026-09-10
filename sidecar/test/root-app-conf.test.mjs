@@ -11,18 +11,17 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ADMIN_NPUB, SESSION_SECRET, authHeaders } from './auth-helper.mjs';
 
-const TOKEN = 'test-admin-token';
 let root;
 let app;
 let reconcileRoot;
 
-const auth = { authorization: `Bearer ${TOKEN}` };
 const readConf = () => readFile(join(root, 'root_app.conf'), 'utf8');
 const countRootLocations = (conf) => (conf.match(/location = \//g) || []).length;
 
-const setRoot = (root_app) =>
-  app.inject({ method: 'POST', url: '/torii/set-root', headers: auth, payload: { root_app } });
+const setRoot = async (root_app) =>
+  app.inject({ method: 'POST', url: '/torii/set-root', headers: await authHeaders(app), payload: { root_app } });
 
 before(async () => {
   root = await mkdtemp(join(tmpdir(), 'torii-rootconf-'));
@@ -32,7 +31,8 @@ before(async () => {
     'utf8',
   );
   process.env.TORII_ROOT = root;
-  process.env.TORII_ADMIN_TOKEN = TOKEN;
+  process.env.TORII_ADMIN_NPUB = ADMIN_NPUB;
+  process.env.TORII_SESSION_SECRET = SESSION_SECRET;
   process.env.TORII_SKIP_NGINX_RELOAD = '1';
   ({ app, reconcileRoot } = await import('../index.mjs'));
   await app.ready();

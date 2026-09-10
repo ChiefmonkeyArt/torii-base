@@ -1,18 +1,18 @@
 // Backend defense-in-depth: /torii/set-root must reject blocklisted apps
-// (Continuum) while leaving other apps (Quest) promotable.
+// (Continuum) while leaving other apps (Quest) promotable. Admin auth goes
+// through the NIP-07 sign-in flow (auth-helper).
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ADMIN_NPUB, SESSION_SECRET, authHeaders } from './auth-helper.mjs';
 
-const TOKEN = 'test-admin-token';
 let root;
 let app;
 let isRootAllowed;
 
-const auth = { authorization: `Bearer ${TOKEN}` };
 const readReg = async () => JSON.parse(await readFile(join(root, 'registry.json'), 'utf8'));
 
 before(async () => {
@@ -26,7 +26,8 @@ before(async () => {
     'utf8',
   );
   process.env.TORII_ROOT = root;
-  process.env.TORII_ADMIN_TOKEN = TOKEN;
+  process.env.TORII_ADMIN_NPUB = ADMIN_NPUB;
+  process.env.TORII_SESSION_SECRET = SESSION_SECRET;
   process.env.TORII_SKIP_NGINX_RELOAD = '1';
   ({ app, isRootAllowed } = await import('../index.mjs'));
   await app.ready();
@@ -47,7 +48,7 @@ test('set-root rejects continuum with 403 and does not mutate registry', async (
   const res = await app.inject({
     method: 'POST',
     url: '/torii/set-root',
-    headers: auth,
+    headers: await authHeaders(app),
     payload: { root_app: 'continuum' },
   });
   assert.equal(res.statusCode, 403);
@@ -59,7 +60,7 @@ test('set-root still promotes quest', async () => {
   const res = await app.inject({
     method: 'POST',
     url: '/torii/set-root',
-    headers: auth,
+    headers: await authHeaders(app),
     payload: { root_app: 'quest' },
   });
   assert.equal(res.statusCode, 200);

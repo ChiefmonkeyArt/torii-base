@@ -73,15 +73,26 @@ const renderTile = (app, isRoot) => {
     if (action === 'set' && !isRootAllowed(app.name)) return;
     btn.disabled = true;
     try {
+      const { getSessionToken, signIn } = window.ToriiAdmin;
+      let token = getSessionToken();
+      if (!token) {
+        toast('Sign in with your Nostr signer to change the homepage…');
+        try {
+          token = await signIn();
+        } catch (err) {
+          toast(err.message || 'Sign-in failed.');
+          return;
+        }
+      }
       const target = action === 'set' ? app.name : null;
       const res = await fetch(SET_ROOT_URL, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
         credentials: 'same-origin',
         body: JSON.stringify({ root_app: target }),
       });
       if (res.status === 401 || res.status === 403) {
-        toast('Sign in as admin to change the homepage.');
+        toast('Not signed in as admin — sign in and try again.');
         return;
       }
       if (!res.ok) {
