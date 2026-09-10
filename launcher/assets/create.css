@@ -63,6 +63,7 @@
 .editor-status { font-size: 13px; min-height: 1.2em; margin: 4px 0 0; color: var(--fg-mute); }
 .editor-status.is-ok { color: #4ec98a; }
 .editor-status.is-err { color: #ff7a5c; }
+.editor-status.is-warn { color: #e8b45c; }
 
 .editor-preview {
   border: 1px solid var(--line);
