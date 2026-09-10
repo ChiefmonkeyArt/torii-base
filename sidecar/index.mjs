@@ -40,7 +40,7 @@ const HOMEPAGE_DIR = join(TORII_ROOT, 'homepage');
 const HOMEPAGE_HTML = join(HOMEPAGE_DIR, 'index.html');
 const PORT = Number(process.env.TORII_SIDECAR_PORT || 8780);
 const HOST = process.env.TORII_SIDECAR_HOST || '127.0.0.1';
-const VERSION = '0.1.9';
+const VERSION = '0.1.10';
 
 // Admin identity is the operator's npub, not a shared secret. createAuth throws
 // (fail closed) if the npub is absent or undecodable, so a misconfigured env
