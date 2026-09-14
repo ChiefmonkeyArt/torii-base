@@ -24,7 +24,7 @@ Environment=NODE_ENV=production
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/opt/torii
+ReadWritePaths=/opt/torii/state
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 LockPersonality=true
 

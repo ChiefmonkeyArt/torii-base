@@ -4,7 +4,7 @@
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateSecretKey, getPublicKey, finalizeEvent } from 'nostr-tools/pure';
@@ -15,7 +15,8 @@ let app;
 
 before(async () => {
   root = await mkdtemp(join(tmpdir(), 'torii-auth-'));
-  await writeFile(join(root, 'registry.json'), JSON.stringify({ apps: [], root_app: null }));
+  await mkdir(join(root, 'state'), { recursive: true });
+  await writeFile(join(root, 'state', 'registry.json'), JSON.stringify({ apps: [], root_app: null }));
   process.env.TORII_ROOT = root;
   process.env.TORII_ADMIN_NPUB = ADMIN_NPUB;
   process.env.TORII_SESSION_SECRET = SESSION_SECRET;
