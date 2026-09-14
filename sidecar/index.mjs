@@ -44,7 +44,7 @@ const HOMEPAGE_DIR = join(STATE_DIR, 'homepage');
 const HOMEPAGE_HTML = join(HOMEPAGE_DIR, 'index.html');
 const PORT = Number(process.env.TORII_SIDECAR_PORT || 8780);
 const HOST = process.env.TORII_SIDECAR_HOST || '127.0.0.1';
-const VERSION = '0.1.11';
+const VERSION = '0.1.12';
 
 // Admin identity is the operator's npub, not a shared secret. createAuth throws
 // (fail closed) if the npub is absent or undecodable, so a misconfigured env
@@ -104,6 +104,16 @@ async function atomicWrite(path, data) {
 
 async function writeRegistry(reg) {
   await atomicWrite(REGISTRY_PATH, JSON.stringify(reg, null, 2) + '\n');
+}
+
+// Serialize registry mutations (SB-17). Each read-modify-write-reload sequence
+// runs under this lock so concurrent register/set-root/unregister/homepage calls
+// cannot interleave and drop an update or reload against a half-written include.
+let registryLock = Promise.resolve();
+function withLock(fn) {
+  const run = registryLock.then(fn);
+  registryLock = run.then(() => {}, () => {});
+  return run;
 }
 
 const LAUNCHER_ROOT_BLOCK =
@@ -235,21 +245,23 @@ app.post('/torii/set-root', async (req, reply) => {
   if (target !== null && !isRootAllowed(target)) {
     return reply.code(403).send({ error: 'root_not_allowed', name: target });
   }
-  const reg = await readRegistry();
-  if (target === HOMEPAGE_ROOT) {
-    // The personal homepage is not a registered app; it just needs to have
-    // been saved + rendered before it can own /.
-    if (!existsSync(HOMEPAGE_HTML)) {
-      return reply.code(409).send({ error: 'homepage_not_configured' });
+  return withLock(async () => {
+    const reg = await readRegistry();
+    if (target === HOMEPAGE_ROOT) {
+      // The personal homepage is not a registered app; it just needs to have
+      // been saved + rendered before it can own /.
+      if (!existsSync(HOMEPAGE_HTML)) {
+        return reply.code(409).send({ error: 'homepage_not_configured' });
+      }
+    } else if (target !== null && !reg.apps.some((a) => a.name === target)) {
+      return reply.code(404).send({ error: 'app_not_installed', name: target });
     }
-  } else if (target !== null && !reg.apps.some((a) => a.name === target)) {
-    return reply.code(404).send({ error: 'app_not_installed', name: target });
-  }
-  const prev = reg.root_app;
-  if (!(await applyRoot(reg, target, prev, req.log))) {
-    return reply.code(500).send({ error: 'nginx_reload_failed' });
-  }
-  return { ok: true, root_app: target };
+    const prev = reg.root_app;
+    if (!(await applyRoot(reg, target, prev, req.log))) {
+      return reply.code(500).send({ error: 'nginx_reload_failed' });
+    }
+    return { ok: true, root_app: target };
+  });
 });
 
 // GET /torii/homepage.json — current saved homepage config (public; the page
@@ -276,9 +288,11 @@ app.post('/torii/homepage', async (req, reply) => {
 
   let activated = false;
   if (req.body?.activate === true) {
-    const reg = await readRegistry();
-    const prev = reg.root_app;
-    if (!(await applyRoot(reg, HOMEPAGE_ROOT, prev, req.log))) {
+    const ok = await withLock(async () => {
+      const reg = await readRegistry();
+      return applyRoot(reg, HOMEPAGE_ROOT, reg.root_app, req.log);
+    });
+    if (!ok) {
       return reply.code(500).send({ error: 'nginx_reload_failed', saved: true });
     }
     activated = true;
@@ -301,25 +315,32 @@ app.post('/torii/apps', async (req, reply) => {
   if (!existsSync(fragmentPath)) {
     return reply.code(400).send({ error: 'missing_fragment', expected: fragmentPath });
   }
-  const reg = await readRegistry();
-  const entry = {
-    name,
-    display_name: typeof display_name === 'string' ? display_name : name,
-    description: typeof description === 'string' ? description : '',
-    version: typeof version === 'string' ? version : 'unknown',
-    installed_at: new Date().toISOString(),
-  };
-  const idx = reg.apps.findIndex((a) => a.name === name);
-  if (idx >= 0) reg.apps[idx] = { ...reg.apps[idx], ...entry };
-  else reg.apps.push(entry);
-  await writeRegistry(reg);
-  try {
-    await nginxReload();
-  } catch (err) {
-    req.log.error({ err }, 'nginx reload after register failed');
-    return reply.code(500).send({ error: 'nginx_reload_failed' });
-  }
-  return { ok: true, app: entry };
+  return withLock(async () => {
+    const reg = await readRegistry();
+    const prevApps = reg.apps.map((a) => ({ ...a }));
+    const prevRoot = reg.root_app;
+    const entry = {
+      name,
+      display_name: typeof display_name === 'string' ? display_name : name,
+      description: typeof description === 'string' ? description : '',
+      version: typeof version === 'string' ? version : 'unknown',
+      installed_at: new Date().toISOString(),
+    };
+    const idx = reg.apps.findIndex((a) => a.name === name);
+    if (idx >= 0) reg.apps[idx] = { ...reg.apps[idx], ...entry };
+    else reg.apps.push(entry);
+    await writeRegistry(reg);
+    try {
+      await nginxReload();
+    } catch (err) {
+      req.log.error({ err }, 'nginx reload after register failed; rolling back');
+      reg.apps = prevApps;
+      reg.root_app = prevRoot;
+      await writeRegistry(reg).catch(() => {});
+      return reply.code(500).send({ error: 'nginx_reload_failed' });
+    }
+    return { ok: true, app: entry };
+  });
 });
 
 // DELETE /torii/apps/:name — removes registration. Fragment removal is the
@@ -327,19 +348,29 @@ app.post('/torii/apps', async (req, reply) => {
 app.delete('/torii/apps/:name', async (req, reply) => {
   const { name } = req.params;
   if (!APP_NAME_RE.test(name)) return reply.code(400).send({ error: 'invalid_name' });
-  const reg = await readRegistry();
-  reg.apps = reg.apps.filter((a) => a.name !== name);
-  if (reg.root_app === name) {
-    reg.root_app = null;
-    await writeRootAppConf(null);
-  }
-  await writeRegistry(reg);
-  try {
-    await nginxReload();
-  } catch (err) {
-    req.log.error({ err }, 'nginx reload after unregister failed');
-  }
-  return { ok: true };
+  return withLock(async () => {
+    const reg = await readRegistry();
+    const prevApps = reg.apps.map((a) => ({ ...a }));
+    const prevRoot = reg.root_app;
+    const changedRoot = reg.root_app === name;
+    reg.apps = reg.apps.filter((a) => a.name !== name);
+    if (changedRoot) {
+      reg.root_app = null;
+      await writeRootAppConf(null);
+    }
+    await writeRegistry(reg);
+    try {
+      await nginxReload();
+    } catch (err) {
+      req.log.error({ err }, 'nginx reload after unregister failed; rolling back');
+      reg.apps = prevApps;
+      reg.root_app = prevRoot;
+      await writeRegistry(reg).catch(() => {});
+      if (changedRoot) await writeRootAppConf(prevRoot).catch(() => {});
+      return reply.code(500).send({ error: 'nginx_reload_failed' });
+    }
+    return { ok: true };
+  });
 });
 
 // ─────────────────────────────────────────────────────────────

@@ -18,6 +18,7 @@ set -euo pipefail
 
 TORII_ROOT="${TORII_ROOT:-/opt/torii}"
 ENV_FILE="${TORII_ROOT}/env"
+REGISTRY_PATH="${TORII_ROOT}/state/registry.json"
 SIDECAR_URL="${TORII_SIDECAR_URL:-http://127.0.0.1:8780}"
 
 die() { echo "torii: $*" >&2; exit 1; }
@@ -75,7 +76,7 @@ cmd_reload() {
 
 cmd_status() {
   echo "== registry =="
-  cat "${TORII_ROOT}/registry.json" 2>/dev/null || echo "(no registry)"
+  cat "$REGISTRY_PATH" 2>/dev/null || echo "(no registry)"
   echo
   echo "== sidecar =="
   curl --silent --fail-with-body "${SIDECAR_URL}/torii/healthz" || echo "(sidecar unreachable)"
@@ -92,23 +93,22 @@ cmd_doctor() {
   echo "[ host layer ]"
   check "TORII_ROOT exists ($TORII_ROOT)"        "[[ -d '$TORII_ROOT' ]]"
   check "env file present"                        "[[ -f '$ENV_FILE' ]]"
-  check "registry.json present"                   "[[ -f '${TORII_ROOT}/registry.json' ]]"
+  check "registry.json present"                   "[[ -f '$REGISTRY_PATH' ]]"
   check "nginx-fragments dir present"             "[[ -d '${TORII_ROOT}/nginx-fragments' ]]"
   check "launcher/index.html present"             "[[ -f '${TORII_ROOT}/launcher/index.html' ]]"
   check "sidecar responding"                      "curl -sf ${SIDECAR_URL}/torii/healthz"
   check "nginx config valid"                      "nginx -t"
 
-  # Discover registered apps + probe each one.
-  if [[ -f "${TORII_ROOT}/registry.json" ]] && command -v python3 >/dev/null 2>&1; then
+  # Discover registered apps + probe each one. The registry stores `apps` as
+  # a LIST of {name, ...}; each app is mounted at /<name>/ by its nginx fragment.
+  if [[ -f "$REGISTRY_PATH" ]] && command -v python3 >/dev/null 2>&1; then
     local apps
-    apps=$(python3 -c "import json; d=json.load(open('${TORII_ROOT}/registry.json')); print(' '.join(d.get('apps', {}).keys()))" 2>/dev/null || true)
+    apps=$(python3 -c "import json,sys; d=json.load(open('$REGISTRY_PATH')); a=d.get('apps',[]); sys.stdout.write(' '.join(x.get('name','') for x in a) if isinstance(a,list) else '')" 2>/dev/null || true)
     if [[ -n "$apps" ]]; then
       echo
       echo "[ registered apps ]"
       for app in $apps; do
-        local mount
-        mount=$(python3 -c "import json; print(json.load(open('${TORII_ROOT}/registry.json'))['apps']['$app']['mount'])" 2>/dev/null || true)
-        check "$app mounted at $mount responds"    "curl -sfo /dev/null http://127.0.0.1$mount/ || curl -sfo /dev/null http://127.0.0.1$mount"
+        check "$app mounted at /$app/ responds"    "curl -sfo /dev/null http://127.0.0.1/$app/"
       done
     fi
   fi
