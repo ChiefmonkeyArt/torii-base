@@ -8,9 +8,9 @@
 //   POST /torii/set-root      → change root_app (admin-only)
 //
 // State lives entirely on disk under $TORII_ROOT (default /opt/torii):
-//   registry.json             → { apps: [...], root_app: string|null }
-//   root_app.conf             → nginx include, rewritten by set-root
-//   nginx-fragments/*.conf    → per-app fragments (read-only here)
+//   state/registry.json      → { apps: [...], root_app: string|null }
+//   state/root_app.conf      → nginx include, rewritten by set-root
+//   nginx-fragments/*.conf   → per-app fragments (read-only here)
 //
 // Admin auth: NIP-07 sign-in. The operator's signer signs a kind-22242
 // challenge through window.nostr; the sidecar accepts it only when the pubkey
@@ -33,14 +33,18 @@ import { createAuth } from './core/auth.mjs';
 const execFileAsync = promisify(execFile);
 
 const TORII_ROOT = process.env.TORII_ROOT || '/opt/torii';
-const REGISTRY_PATH = join(TORII_ROOT, 'registry.json');
-const ROOT_APP_CONF = join(TORII_ROOT, 'root_app.conf');
-const HOMEPAGE_JSON = join(TORII_ROOT, 'homepage.json');
-const HOMEPAGE_DIR = join(TORII_ROOT, 'homepage');
+// SB-01: runtime state the service user writes lives under root-owned /opt/torii's
+// torii-owned state/ subdir, not the root itself (which is root-owned and must
+// not be rename/replaceable by the sidecar).
+const STATE_DIR = join(TORII_ROOT, 'state');
+const REGISTRY_PATH = join(STATE_DIR, 'registry.json');
+const ROOT_APP_CONF = join(STATE_DIR, 'root_app.conf');
+const HOMEPAGE_JSON = join(STATE_DIR, 'homepage.json');
+const HOMEPAGE_DIR = join(STATE_DIR, 'homepage');
 const HOMEPAGE_HTML = join(HOMEPAGE_DIR, 'index.html');
 const PORT = Number(process.env.TORII_SIDECAR_PORT || 8780);
 const HOST = process.env.TORII_SIDECAR_HOST || '127.0.0.1';
-const VERSION = '0.1.10';
+const VERSION = '0.1.11';
 
 // Admin identity is the operator's npub, not a shared secret. createAuth throws
 // (fail closed) if the npub is absent or undecodable, so a misconfigured env
@@ -364,7 +368,9 @@ async function reconcileRoot() {
 
 const start = async () => {
   if (!existsSync(REGISTRY_PATH)) {
-    await mkdir(TORII_ROOT, { recursive: true }).catch(() => {});
+    // SB-01: the sidecar may only ensure its own state/ dir, not the root-owned
+    // /opt/torii parent.
+    await mkdir(STATE_DIR, { recursive: true }).catch(() => {});
     await writeRegistry({ apps: [], root_app: null }).catch(() => {});
   }
   if (!existsSync(ROOT_APP_CONF)) await writeRootAppConf(null).catch(() => {});

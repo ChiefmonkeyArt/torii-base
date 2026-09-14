@@ -17,7 +17,7 @@ let root;
 let app;
 let reconcileRoot;
 
-const readConf = () => readFile(join(root, 'root_app.conf'), 'utf8');
+const readConf = () => readFile(join(root, 'state', 'root_app.conf'), 'utf8');
 const countRootLocations = (conf) => (conf.match(/location = \//g) || []).length;
 
 const setRoot = async (root_app) =>
@@ -25,8 +25,9 @@ const setRoot = async (root_app) =>
 
 before(async () => {
   root = await mkdtemp(join(tmpdir(), 'torii-rootconf-'));
+  await mkdir(join(root, 'state'), { recursive: true });
   await writeFile(
-    join(root, 'registry.json'),
+    join(root, 'state', 'registry.json'),
     JSON.stringify({ apps: [{ name: 'quest' }], root_app: null }),
     'utf8',
   );
@@ -62,8 +63,8 @@ test('set-root <app> writes exactly one 302 redirect block', async () => {
 });
 
 test('set-root homepage writes exactly one static homepage block', async () => {
-  await mkdir(join(root, 'homepage'), { recursive: true });
-  await writeFile(join(root, 'homepage', 'index.html'), '<!doctype html><title>hp</title>', 'utf8');
+  await mkdir(join(root, 'state', 'homepage'), { recursive: true });
+  await writeFile(join(root, 'state', 'homepage', 'index.html'), '<!doctype html><title>hp</title>', 'utf8');
   const res = await setRoot('homepage');
   assert.equal(res.statusCode, 200);
   const conf = await readConf();
@@ -83,7 +84,7 @@ test('re-running set-root none is idempotent — still exactly one block', async
 test('boot reconcile keeps exactly one block for every registry state', async () => {
   for (const state of [null, 'quest']) {
     await writeFile(
-      join(root, 'registry.json'),
+      join(root, 'state', 'registry.json'),
       JSON.stringify({ apps: [{ name: 'quest' }], root_app: state }),
       'utf8',
     );

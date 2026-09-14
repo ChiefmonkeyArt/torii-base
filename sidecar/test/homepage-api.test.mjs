@@ -16,13 +16,14 @@ let root;
 let app;
 let reconcileRoot;
 
-const readReg = async () => JSON.parse(await readFile(join(root, 'registry.json'), 'utf8'));
-const readConf = async () => readFile(join(root, 'root_app.conf'), 'utf8');
+const readReg = async () => JSON.parse(await readFile(join(root, 'state', 'registry.json'), 'utf8'));
+const readConf = async () => readFile(join(root, 'state', 'root_app.conf'), 'utf8');
 
 before(async () => {
   root = await mkdtemp(join(tmpdir(), 'torii-hp-'));
+  await mkdir(join(root, 'state'), { recursive: true });
   await writeFile(
-    join(root, 'registry.json'),
+    join(root, 'state', 'registry.json'),
     JSON.stringify({ apps: [{ name: 'quest' }], root_app: null }),
     'utf8',
   );
@@ -60,7 +61,7 @@ test('invalid homepage is rejected with field errors and writes nothing', async 
   assert.equal(res.statusCode, 400);
   assert.equal(res.json().error, 'invalid_homepage');
   assert.ok(Array.isArray(res.json().errors));
-  assert.equal(existsSync(join(root, 'homepage.json')), false);
+  assert.equal(existsSync(join(root, 'state', 'homepage.json')), false);
 });
 
 test('activating before a homepage exists is refused (409)', async () => {
@@ -81,11 +82,11 @@ test('save persists config + renders static HTML atomically', async () => {
   assert.equal(res.statusCode, 200);
   assert.equal(res.json().activated, false);
 
-  const saved = JSON.parse(await readFile(join(root, 'homepage.json'), 'utf8'));
+  const saved = JSON.parse(await readFile(join(root, 'state', 'homepage.json'), 'utf8'));
   assert.equal(saved.title, 'My Home');
   assert.ok(saved.updated_at);
 
-  const html = await readFile(join(root, 'homepage', 'index.html'), 'utf8');
+  const html = await readFile(join(root, 'state', 'homepage', 'index.html'), 'utf8');
   assert.ok(html.includes('My Home'));
   assert.equal(/<script/i.test(html), false);
 
@@ -147,7 +148,7 @@ test('reconcile resets a dangling homepage root back to the launcher', async () 
   // Point root at homepage, then delete the rendered file to simulate loss.
   await app.inject({ method: 'POST', url: '/torii/set-root', headers: await authHeaders(app), payload: { root_app: 'homepage' } });
   assert.equal((await readReg()).root_app, 'homepage');
-  await unlink(join(root, 'homepage', 'index.html'));
+  await unlink(join(root, 'state', 'homepage', 'index.html'));
 
   await reconcileRoot();
 
@@ -157,8 +158,8 @@ test('reconcile resets a dangling homepage root back to the launcher', async () 
 });
 
 test('reconcile is a no-op when homepage html is present', async () => {
-  await mkdir(join(root, 'homepage'), { recursive: true });
-  await writeFile(join(root, 'homepage', 'index.html'), '<!doctype html>ok', 'utf8');
+  await mkdir(join(root, 'state', 'homepage'), { recursive: true });
+  await writeFile(join(root, 'state', 'homepage', 'index.html'), '<!doctype html>ok', 'utf8');
   await app.inject({ method: 'POST', url: '/torii/set-root', headers: await authHeaders(app), payload: { root_app: 'homepage' } });
   await reconcileRoot();
   assert.equal((await readReg()).root_app, 'homepage');
@@ -173,7 +174,7 @@ test('reconcile upgrades a legacy comment-only root_app.conf to the launcher blo
   await app.inject({ method: 'POST', url: '/torii/set-root', headers: await authHeaders(app), payload: { root_app: null } });
   // Simulate the legacy stub: comments only, no location block at all.
   await writeFile(
-    join(root, 'root_app.conf'),
+    join(root, 'state', 'root_app.conf'),
     '# Written by torii-base bootstrap. root_app is unset; the launcher owns /.\n',
     'utf8',
   );

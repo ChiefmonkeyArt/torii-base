@@ -133,13 +133,14 @@ fails closed (leaving the existing config intact) if the sidecar never comes up.
 
 ```
 /opt/torii/
-  env                            # TORII_ADMIN_NPUB, TORII_SESSION_SECRET, TORII_DOMAIN, etc.
-  registry.json                  # apps registered on this host
-  root_app.conf                  # nginx include for `/` (launcher/redirect/homepage)
-  homepage.json                  # saved personal-homepage config
-  homepage/index.html            # rendered personal homepage (served at / when active)
+  env                            # TORII_ADMIN_NPUB, TORII_SESSION_SECRET, TORII_DOMAIN, etc. (root-owned)
   launcher/                      # static assets served at /
-  nginx-fragments/               # each app drops its own <name>.conf here
+  nginx-fragments/               # each app drops its own <name>.conf here (root-owned)
+  state/                         # runtime state written by the sidecar (torii-owned)
+    registry.json                # apps registered on this host
+    root_app.conf                # nginx include for `/` (launcher/redirect/homepage)
+    homepage.json                # saved personal-homepage config
+    homepage/index.html          # rendered personal homepage (served at / when active)
 
 /etc/nginx/sites-available/
   torii                          # main server block; includes fragments + root_app
@@ -174,7 +175,10 @@ does all of this automatically.
   nginx blocks those write routes publicly, so only the on-box `torii register`
   (as root) can add or remove app tiles.
 - Systemd unit is hardened: `NoNewPrivileges`, `ProtectSystem=full`,
-  `ReadWritePaths=/opt/torii`.
+  `ReadWritePaths=/opt/torii/state`. `/opt/torii` itself (and `env`, `launcher`,
+  `sidecar`, `nginx-fragments`) are root-owned; the `torii` service user can
+  only write its `state/` dir — it can never rename/replace the root-consumed
+  `env` or nginx includes (SB-01).
 - The launcher and `apps.json` are public. If you don't want the world to
   know what you host, set an app as homepage in the browser so `/` redirects
   to your chosen app and never shows the launcher.

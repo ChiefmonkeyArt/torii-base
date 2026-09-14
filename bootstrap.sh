@@ -24,6 +24,7 @@
 set -euo pipefail
 
 TORII_ROOT="${TORII_ROOT:-/opt/torii}"
+STATE_DIR="${STATE_DIR:-$TORII_ROOT/state}"
 TORII_USER="${TORII_USER:-torii}"
 TORII_SIDECAR_PORT="${TORII_SIDECAR_PORT:-8780}"
 TORII_DOMAIN="${TORII_DOMAIN:-}"
@@ -59,14 +60,20 @@ log "Creating $TORII_USER user"
 id -u "$TORII_USER" >/dev/null 2>&1 || useradd --system --shell /usr/sbin/nologin --home "$TORII_ROOT" "$TORII_USER"
 
 log "Laying down $TORII_ROOT"
-install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT"
-install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT/launcher" "$TORII_ROOT/launcher/assets"
-install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT/nginx-fragments"
-install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT/sidecar"
-# Personal homepage: the sidecar renders index.html here; nginx serves it at /
-# when the homepage is activated as root_app.
-install -d -m 0755 -o "$TORII_USER" -g "$TORII_USER" "$TORII_ROOT/homepage"
-install -d -m 0755 -o "root"        -g "root"        "$TORII_ROOT/bin"
+# SB-01 (ownership boundary): /opt/torii and all deployment config/code are
+# root-owned; the `torii` service user may only write under the narrowly-scoped
+# state/ dir. A prior layout owned /opt/torii by `torii`, letting a compromised
+# sidecar rename/replace the root-consumed `env` (session secret) and nginx
+# includes it reads as root.
+install -d -m 0755 "$TORII_ROOT"
+chown root:root "$TORII_ROOT"
+install -d -m 0755 "$TORII_ROOT/launcher" "$TORII_ROOT/launcher/assets"
+install -d -m 0755 "$TORII_ROOT/nginx-fragments"
+install -d -m 0755 "$TORII_ROOT/sidecar"
+install -d -m 0755 "$TORII_ROOT/bin"
+# Runtime state the sidecar writes (registry, root_app.conf, homepage.json,
+# rendered homepage) lives under this service-writable dir.
+install -d -m 0750 "$STATE_DIR"
 
 cp -a "$SCRIPT_DIR/launcher/index.html"        "$TORII_ROOT/launcher/index.html"
 cp -a "$SCRIPT_DIR/launcher/assets/."          "$TORII_ROOT/launcher/assets/"
@@ -74,7 +81,7 @@ cp -a "$SCRIPT_DIR/sidecar/."                  "$TORII_ROOT/sidecar/"
 cp -a "$SCRIPT_DIR/bin/torii"                  "/usr/local/bin/torii"
 chmod 0755 /usr/local/bin/torii
 
-chown -R "$TORII_USER:$TORII_USER" "$TORII_ROOT/launcher" "$TORII_ROOT/sidecar" "$TORII_ROOT/nginx-fragments" "$TORII_ROOT/homepage"
+chown -R root:root "$TORII_ROOT/launcher" "$TORII_ROOT/sidecar" "$TORII_ROOT/nginx-fragments" "$TORII_ROOT/bin"
 
 log "Writing $TORII_ROOT/env (admin npub + session secret)"
 if [[ ! -f "$TORII_ROOT/env" ]]; then
@@ -86,30 +93,49 @@ TORII_SESSION_SECRET=$SESSION_SECRET
 TORII_SIDECAR_PORT=$TORII_SIDECAR_PORT
 TORII_SIDECAR_HOST=127.0.0.1
 EOF
-  chmod 0640 "$TORII_ROOT/env"
-  chown root:"$TORII_USER" "$TORII_ROOT/env"
 fi
+# env is root-consumed config (systemd EnvironmentFile + the `torii` CLI) and
+# must be root-owned under a root-owned parent so the service user cannot
+# rename/replace it (SB-01).
+chmod 0640 "$TORII_ROOT/env"
+chown root:root "$TORII_ROOT/env"
 
-if [[ ! -f "$TORII_ROOT/registry.json" ]]; then
-  echo '{"apps":[],"root_app":null}' > "$TORII_ROOT/registry.json"
-  chown "$TORII_USER:$TORII_USER" "$TORII_ROOT/registry.json"
+# Migrate any pre-hardening runtime state from the old torii-owned /opt/torii
+# root into state/ (idempotent; fresh installs skip straight to the defaults).
+if [[ -d "$TORII_ROOT/homepage" ]]; then
+  rm -rf "$STATE_DIR/homepage"
+  mv -f "$TORII_ROOT/homepage" "$STATE_DIR/homepage"
 fi
-[[ -f "$TORII_ROOT/root_app.conf" ]] || {
+for _f in registry.json root_app.conf homepage.json; do
+  if [[ -f "$TORII_ROOT/$_f" && ! -f "$STATE_DIR/$_f" ]]; then
+    mv -f "$TORII_ROOT/$_f" "$STATE_DIR/$_f"
+  fi
+done
+install -d -m 0750 "$STATE_DIR/homepage"
+chown -R "$TORII_USER:$TORII_USER" "$STATE_DIR"
+
+if [[ ! -f "$STATE_DIR/registry.json" ]]; then
+  echo '{"apps":[],"root_app":null}' > "$STATE_DIR/registry.json"
+  chown "$TORII_USER:$TORII_USER" "$STATE_DIR/registry.json"
+fi
+[[ -f "$STATE_DIR/root_app.conf" ]] || {
   # This include is the single owner of `location = /` (torii.conf has no
   # fallback). Default state serves the launcher; the sidecar rewrites it on
   # set-root / homepage activation and also reconciles it on boot.
-  cat > "$TORII_ROOT/root_app.conf" <<EOF
+  cat > "$STATE_DIR/root_app.conf" <<EOF
 # Written by torii-base bootstrap. root_app is unset; the launcher owns /.
 location = / {
     root $TORII_ROOT/launcher;
     try_files /index.html =404;
 }
 EOF
-  chown "$TORII_USER:$TORII_USER" "$TORII_ROOT/root_app.conf"
+  chown "$TORII_USER:$TORII_USER" "$STATE_DIR/root_app.conf"
 }
 
 log "Installing sidecar deps"
-(cd "$TORII_ROOT/sidecar" && sudo -u "$TORII_USER" npm ci --omit=dev --silent 2>/dev/null || sudo -u "$TORII_USER" npm install --omit=dev --silent)
+# sidecar/ is root-owned deployment code now; install deps as root so the
+# service user can read (not modify) the running sidecar tree.
+(cd "$TORII_ROOT/sidecar" && npm ci --omit=dev --silent 2>/dev/null || npm install --omit=dev --silent)
 
 log "Installing sudoers snippet for $TORII_USER -> nginx"
 # The sidecar runs as the unprivileged 'torii' user but has to reload nginx

@@ -4,7 +4,7 @@
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ADMIN_NPUB, SESSION_SECRET, authHeaders } from './auth-helper.mjs';
@@ -13,12 +13,13 @@ let root;
 let app;
 let isRootAllowed;
 
-const readReg = async () => JSON.parse(await readFile(join(root, 'registry.json'), 'utf8'));
+const readReg = async () => JSON.parse(await readFile(join(root, 'state', 'registry.json'), 'utf8'));
 
 before(async () => {
   root = await mkdtemp(join(tmpdir(), 'torii-test-'));
+  await mkdir(join(root, 'state'), { recursive: true });
   await writeFile(
-    join(root, 'registry.json'),
+    join(root, 'state', 'registry.json'),
     JSON.stringify({
       apps: [{ name: 'continuum' }, { name: 'quest' }],
       root_app: null,
